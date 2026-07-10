@@ -7,12 +7,16 @@ import SwiftUI
 struct VirtualKeyboardView: View {
     @ObservedObject var viewModel: BrowserViewModel
 
+    /// Natural size of the gamepad layout; it is scaled down to fit narrow screens.
+    private static let gamepadSize = CGSize(width: 540, height: 85)
+    @State private var availableWidth: CGFloat = 0
+
     var body: some View {
         VStack(spacing: 6) {
             if viewModel.fullKeyboard {
                 fullKeyboard
             } else {
-                gamepadLayout
+                scaledGamepad
             }
         }
         .padding(.horizontal, 8)
@@ -21,6 +25,25 @@ struct VirtualKeyboardView: View {
     }
 
     // MARK: - Gamepad layout
+
+    /// Shrinks the fixed-size gamepad layout to fit the available width.
+    private var scaledGamepad: some View {
+        let scale = availableWidth > 0
+            ? min(1, availableWidth / Self.gamepadSize.width) : 1
+
+        return gamepadLayout
+            .frame(width: Self.gamepadSize.width, height: Self.gamepadSize.height)
+            .scaleEffect(scale)
+            .frame(maxWidth: .infinity)
+            .frame(height: Self.gamepadSize.height * scale)
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { availableWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, w in availableWidth = w }
+                }
+            )
+    }
 
     private var gamepadLayout: some View {
         HStack(alignment: .center, spacing: 14) {
