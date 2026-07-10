@@ -69,8 +69,6 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     var webViewSize: CGSize = .zero
 
-    let webView: WKWebView
-
     private var observers: [NSKeyValueObservation] = []
     private var lastClickTime: Date = .distantPast
     private var lastClickPoint: CGPoint = .zero
@@ -100,6 +98,31 @@ final class BrowserViewModel: NSObject, ObservableObject {
             ]
         }
 
+        super.init()
+
+        newTab()
+    }
+
+    // MARK: - Tabs
+
+    final class Tab: Identifiable, ObservableObject {
+        let id = UUID()
+        let webView: WKWebView
+        init(webView: WKWebView) { self.webView = webView }
+
+        @MainActor var title: String {
+            let t = webView.title ?? ""
+            return t.isEmpty ? (webView.url?.host ?? "新しいタブ") : t
+        }
+        @MainActor var urlString: String { webView.url?.absoluteString ?? "" }
+    }
+
+    @Published var tabs: [Tab] = []
+    @Published var activeTabIndex: Int = 0
+
+    var webView: WKWebView { tabs[activeTabIndex].webView }
+
+    private func makeWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
@@ -112,20 +135,47 @@ final class BrowserViewModel: NSObject, ObservableObject {
             forMainFrameOnly: true
         )
         config.userContentController.addUserScript(userScript)
+        config.userContentController.add(ScriptMessageProxy(self), name: "gbEvents")
 
-        webView = WKWebView(frame: .zero, configuration: config)
+        let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = Self.desktopUserAgent
         webView.allowsBackForwardNavigationGestures = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = false
         webView.backgroundColor = .black
-
-        super.init()
-
-        config.userContentController.add(ScriptMessageProxy(self), name: "gbEvents")
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        return webView
+    }
 
+    func newTab(url: URL? = nil) {
+        let tab = Tab(webView: makeWebView())
+        tabs.append(tab)
+        selectTab(tabs.count - 1)
+        tab.webView.load(URLRequest(url: url ?? Self.homeURL))
+    }
+
+    func selectTab(_ index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        activeTabIndex = index
+        bindObservers(to: tabs[index].webView)
+        pointerLocked = false
+        dragLocked = false
+    }
+
+    func closeTab(_ index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        let tab = tabs.remove(at: index)
+        tab.webView.stopLoading()
+        if tabs.isEmpty {
+            newTab()
+        } else {
+            let shifted = activeTabIndex >= index ? activeTabIndex - 1 : activeTabIndex
+            selectTab(min(max(shifted, 0), tabs.count - 1))
+        }
+    }
+
+    private func bindObservers(to webView: WKWebView) {
         observers = [
             webView.observe(\.estimatedProgress) { [weak self] wv, _ in
                 Task { @MainActor in self?.progress = wv.estimatedProgress }
@@ -149,8 +199,14 @@ final class BrowserViewModel: NSObject, ObservableObject {
                 Task { @MainActor in self?.pageTitle = wv.title ?? "" }
             },
         ]
-
-        webView.load(URLRequest(url: Self.homeURL))
+        // Sync published state to the newly selected tab immediately.
+        progress = webView.estimatedProgress
+        isLoading = webView.isLoading
+        canGoBack = webView.canGoBack
+        canGoForward = webView.canGoForward
+        currentURL = webView.url
+        urlText = webView.url?.absoluteString ?? ""
+        pageTitle = webView.title ?? ""
     }
 
     // MARK: - Navigation
@@ -309,9 +365,9 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
                              createWebViewWith configuration: WKWebViewConfiguration,
                              for navigationAction: WKNavigationAction,
                              windowFeatures: WKWindowFeatures) -> WKWebView? {
-        // Open popups in the same web view.
+        // Open popups in a new tab.
         if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
-            Task { @MainActor in webView.load(URLRequest(url: url)) }
+            Task { @MainActor [weak self] in self?.newTab(url: url) }
         }
         return nil
     }

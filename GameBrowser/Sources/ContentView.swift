@@ -5,6 +5,7 @@ struct ContentView: View {
     @FocusState private var urlFieldFocused: Bool
     @State private var showSettings = false
     @State private var showBookmarks = false
+    @State private var showTabs = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,6 +51,7 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: viewModel.immersive)
         .sheet(isPresented: $showSettings) { settingsSheet }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
+        .sheet(isPresented: $showTabs) { tabsSheet }
     }
 
     /// Small floating controls shown in immersive mode.
@@ -126,6 +128,15 @@ struct ContentView: View {
 
             Button { showBookmarks = true } label: {
                 Image(systemName: "book")
+            }
+
+            Button { showTabs = true } label: {
+                ZStack {
+                    Image(systemName: "square.on.square")
+                    Text("\(viewModel.tabs.count)")
+                        .font(.system(size: 9, weight: .bold))
+                        .offset(y: 1)
+                }
             }
 
             Button { showSettings = true } label: {
@@ -235,6 +246,62 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 5)
         }
+    }
+
+    // MARK: - Tabs
+
+    private var tabsSheet: some View {
+        NavigationStack {
+            List {
+                ForEach(Array(viewModel.tabs.enumerated()), id: \.element.id) { index, tab in
+                    Button {
+                        viewModel.selectTab(index)
+                        showTabs = false
+                    } label: {
+                        HStack {
+                            Image(systemName: index == viewModel.activeTabIndex
+                                  ? "checkmark.circle.fill" : "globe")
+                                .foregroundStyle(index == viewModel.activeTabIndex
+                                                 ? Color.cyan : Color.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(tab.title)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                Text(tab.urlString)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button {
+                                viewModel.closeTab(index)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("タブ (\(viewModel.tabs.count))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        viewModel.newTab()
+                        showTabs = false
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { showTabs = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     // MARK: - Bookmarks
