@@ -1,0 +1,43 @@
+workflows:
+  ios-unsigned:
+    name: GameBrowser (unsigned IPA)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+      vars:
+        XCODE_PROJECT: GameBrowser.xcodeproj
+        XCODE_SCHEME: GameBrowser
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: "*"
+          include: true
+    scripts:
+      - name: Build without code signing
+        script: |
+          xcodebuild build \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+      - name: Package Payload as zip (rename to .ipa after download)
+        script: |
+          APP_PATH="build/Build/Products/Release-iphoneos/GameBrowser.app"
+          test -d "$APP_PATH" || { echo "app not found"; exit 1; }
+          mkdir -p dist/Payload
+          cp -R "$APP_PATH" dist/Payload/
+          cd dist
+          zip -qry GameBrowser.zip Payload
+          # Also produce a ready-made .ipa (identical content).
+          cp GameBrowser.zip GameBrowser.ipa
+          ls -la
+    artifacts:
+      - dist/GameBrowser.zip
+      - dist/GameBrowser.ipa

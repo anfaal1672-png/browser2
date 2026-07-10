@@ -1,0 +1,295 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AA00000120000001000000AA /* GameBrowserApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000001000000AA /* GameBrowserApp.swift */; };
+		AA00000120000002000000AA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000002000000AA /* ContentView.swift */; };
+		AA00000120000003000000AA /* BrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000003000000AA /* BrowserViewModel.swift */; };
+		AA00000120000004000000AA /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000004000000AA /* WebViewContainer.swift */; };
+		AA00000120000005000000AA /* TrackpadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000005000000AA /* TrackpadView.swift */; };
+		AA00000120000006000000AA /* CursorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000006000000AA /* CursorView.swift */; };
+		AA00000120000007000000AA /* VirtualKeyboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000007000000AA /* VirtualKeyboardView.swift */; };
+		AA00000120000008000000AA /* InputBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000008000000AA /* InputBridge.swift */; };
+		AA00000120000009000000AA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA00000110000009000000AA /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AA00000110000001000000AA /* GameBrowserApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameBrowserApp.swift; sourceTree = "<group>"; };
+		AA00000110000002000000AA /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AA00000110000003000000AA /* BrowserViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserViewModel.swift; sourceTree = "<group>"; };
+		AA00000110000004000000AA /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
+		AA00000110000005000000AA /* TrackpadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackpadView.swift; sourceTree = "<group>"; };
+		AA00000110000006000000AA /* CursorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorView.swift; sourceTree = "<group>"; };
+		AA00000110000007000000AA /* VirtualKeyboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualKeyboardView.swift; sourceTree = "<group>"; };
+		AA00000110000008000000AA /* InputBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputBridge.swift; sourceTree = "<group>"; };
+		AA00000110000009000000AA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA0000011000000A000000AA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA00000130000001000000AA /* GameBrowser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GameBrowser.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AA00000140000001000000AA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AA00000150000001000000AA = {
+			isa = PBXGroup;
+			children = (
+				AA00000150000002000000AA /* GameBrowser */,
+				AA00000150000004000000AA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AA00000150000002000000AA /* GameBrowser */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000150000003000000AA /* Sources */,
+				AA00000110000009000000AA /* Assets.xcassets */,
+				AA0000011000000A000000AA /* Info.plist */,
+			);
+			path = GameBrowser;
+			sourceTree = "<group>";
+		};
+		AA00000150000003000000AA /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000110000001000000AA /* GameBrowserApp.swift */,
+				AA00000110000002000000AA /* ContentView.swift */,
+				AA00000110000003000000AA /* BrowserViewModel.swift */,
+				AA00000110000004000000AA /* WebViewContainer.swift */,
+				AA00000110000005000000AA /* TrackpadView.swift */,
+				AA00000110000006000000AA /* CursorView.swift */,
+				AA00000110000007000000AA /* VirtualKeyboardView.swift */,
+				AA00000110000008000000AA /* InputBridge.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		AA00000150000004000000AA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000130000001000000AA /* GameBrowser.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA00000160000001000000AA /* GameBrowser */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA00000170000003000000AA /* Build configuration list for PBXNativeTarget "GameBrowser" */;
+			buildPhases = (
+				AA00000180000001000000AA /* Sources */,
+				AA00000140000001000000AA /* Frameworks */,
+				AA00000190000001000000AA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GameBrowser;
+			productName = GameBrowser;
+			productReference = AA00000130000001000000AA /* GameBrowser.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA000001A0000001000000AA /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					AA00000160000001000000AA = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = AA00000170000001000000AA /* Build configuration list for PBXProject "GameBrowser" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = ja;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				ja,
+				en,
+				Base,
+			);
+			mainGroup = AA00000150000001000000AA;
+			productRefGroup = AA00000150000004000000AA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA00000160000001000000AA /* GameBrowser */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA00000190000001000000AA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA00000120000009000000AA /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AA00000180000001000000AA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA00000120000001000000AA /* GameBrowserApp.swift in Sources */,
+				AA00000120000002000000AA /* ContentView.swift in Sources */,
+				AA00000120000003000000AA /* BrowserViewModel.swift in Sources */,
+				AA00000120000004000000AA /* WebViewContainer.swift in Sources */,
+				AA00000120000005000000AA /* TrackpadView.swift in Sources */,
+				AA00000120000006000000AA /* CursorView.swift in Sources */,
+				AA00000120000007000000AA /* VirtualKeyboardView.swift in Sources */,
+				AA00000120000008000000AA /* InputBridge.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AA000001B0000001000000AA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AA000001B0000002000000AA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA000001B0000003000000AA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GameBrowser/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.anfaal.gamebrowser;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA000001B0000004000000AA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = GameBrowser/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.anfaal.gamebrowser;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA00000170000001000000AA /* Build configuration list for PBXProject "GameBrowser" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000001B0000001000000AA /* Debug */,
+				AA000001B0000002000000AA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA00000170000003000000AA /* Build configuration list for PBXNativeTarget "GameBrowser" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000001B0000003000000AA /* Debug */,
+				AA000001B0000004000000AA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AA000001A0000001000000AA /* Project object */;
+}
