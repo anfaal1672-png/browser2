@@ -81,6 +81,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     private var observers: [NSKeyValueObservation] = []
+    private var saveTabsTask: Task<Void, Never>?
     private var lastClickTime: Date = .distantPast
     private var lastClickPoint: CGPoint = .zero
 
@@ -111,7 +112,44 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         super.init()
 
-        newTab()
+        restoreTabs()
+
+        // Persist tabs when the app is backgrounded or killed by the system.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.saveTabs() }
+        }
+    }
+
+    // MARK: - Tab persistence
+
+    private func saveTabs() {
+        let urls = tabs.map {
+            ($0.webView.url ?? $0.pendingURL ?? Self.homeURL).absoluteString
+        }
+        let defaults = UserDefaults.standard
+        defaults.set(urls, forKey: "savedTabs")
+        defaults.set(activeTabIndex, forKey: "savedActiveTabIndex")
+    }
+
+    private func restoreTabs() {
+        let defaults = UserDefaults.standard
+        let urls = (defaults.stringArray(forKey: "savedTabs") ?? [])
+            .compactMap { URL(string: $0) }
+        guard !urls.isEmpty else {
+            newTab()
+            return
+        }
+        for url in urls {
+            let tab = Tab(webView: makeWebView())
+            tab.pendingURL = url
+            tabs.append(tab)
+            tab.webView.load(URLRequest(url: url))
+        }
+        let saved = defaults.integer(forKey: "savedActiveTabIndex")
+        selectTab(min(max(saved, 0), tabs.count - 1))
     }
 
     // MARK: - Tabs
@@ -120,6 +158,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let id = UUID()
         let webView: WKWebView
         @Published var snapshot: UIImage?
+        /// Last requested URL; used for persistence while the page is still loading.
+        var pendingURL: URL?
         init(webView: WKWebView) { self.webView = webView }
 
         @MainActor var title: String {
@@ -162,9 +202,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     func newTab(url: URL? = nil) {
         let tab = Tab(webView: makeWebView())
+        tab.pendingURL = url ?? Self.homeURL
         tabs.append(tab)
         selectTab(tabs.count - 1)
         tab.webView.load(URLRequest(url: url ?? Self.homeURL))
+        saveTabs()
     }
 
     func selectTab(_ index: Int) {
@@ -181,6 +223,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         for (i, tab) in tabs.enumerated() {
             tab.webView.setAllMediaPlaybackSuspended(i != index)
         }
+        saveTabs()
     }
 
     /// Capture a thumbnail of the currently displayed tab for the tab switcher.
@@ -205,6 +248,16 @@ final class BrowserViewModel: NSObject, ObservableObject {
             let shifted = activeTabIndex >= index ? activeTabIndex - 1 : activeTabIndex
             selectTab(min(max(shifted, 0), tabs.count - 1))
         }
+        saveTabs()
+    }
+
+    private func saveTabsDebounced() {
+        saveTabsTask?.cancel()
+        saveTabsTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.saveTabs()
+        }
     }
 
     private func bindObservers(to webView: WKWebView) {
@@ -225,6 +278,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
                 Task { @MainActor in
                     self?.currentURL = wv.url
                     if let url = wv.url { self?.urlText = url.absoluteString }
+                    self?.saveTabsDebounced()
                 }
             },
             webView.observe(\.title) { [weak self] wv, _ in
