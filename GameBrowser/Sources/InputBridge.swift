@@ -14,19 +14,50 @@ enum InputBridge {
             buttons: 0,
             lastTarget: null,
             lastDownTarget: null,
+            keyFrame: null,   // iframe element that should receive key events
+            raw: false,       // true while handling a call forwarded from a parent frame
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
-        // zoomed out, so convert to CSS/layout-viewport coordinates.
+        // zoomed out, so convert to CSS/layout-viewport coordinates. Calls
+        // forwarded from a parent frame are already in CSS coordinates.
         function toPage(x, y) {
             const v = window.visualViewport;
-            if (!v) { return { x: x, y: y }; }
+            if (state.raw || !v) { return { x: x, y: y }; }
             return { x: x / v.scale + v.offsetLeft, y: y / v.scale + v.offsetTop };
+        }
+
+        function scaleFactor() {
+            return (state.raw || !window.visualViewport) ? 1 : window.visualViewport.scale;
         }
 
         function targetAt(x, y) {
             let el = document.elementFromPoint(x, y);
+            // Descend into shadow DOM so events reach the real element.
+            while (el && el.shadowRoot) {
+                const inner = el.shadowRoot.elementFromPoint(x, y);
+                if (!inner || inner === el) { break; }
+                el = inner;
+            }
             return el || document.documentElement;
+        }
+
+        function isFrame(el) {
+            const tag = el && el.tagName;
+            return tag === 'IFRAME' || tag === 'FRAME';
+        }
+
+        // Forward a bridge call into a child (i)frame, translating coordinates
+        // into that frame's viewport. Works cross-origin via postMessage; the
+        // same script is injected into every frame, so this recurses naturally.
+        function forward(frameEl, fn, x, y, rest) {
+            const r = frameEl.getBoundingClientRect();
+            const fx = x - (r.left + (frameEl.clientLeft || 0));
+            const fy = y - (r.top + (frameEl.clientTop || 0));
+            try {
+                frameEl.contentWindow.postMessage(
+                    { __gbCall: fn, args: [fx, fy].concat(rest || []) }, '*');
+            } catch (e) {}
         }
 
         function common(x, y, extra) {
@@ -79,11 +110,17 @@ enum InputBridge {
         const bridge = {
             move: function (x, y, dx, dy) {
                 const p = toPage(x, y); x = p.x; y = p.y;
-                const s = window.visualViewport ? window.visualViewport.scale : 1;
+                const s = scaleFactor();
                 dx = (dx || 0) / s; dy = (dy || 0) / s;
                 state.x = x; state.y = y;
                 const locked = document.pointerLockElement;
                 const target = locked || targetAt(x, y);
+                // Keep drags anchored to the outer document: only hand the move to
+                // an iframe when no button is held in this frame.
+                if (!locked && !state.buttons && isFrame(target)) {
+                    forward(target, 'move', x, y, [dx, dy]);
+                    return;
+                }
                 const extra = { movementX: dx || 0, movementY: dy || 0 };
                 if (!locked) { hoverTransition(target, x, y); }
                 firePointer('pointermove', target, x, y, -1, extra);
@@ -93,6 +130,16 @@ enum InputBridge {
             down: function (x, y, button) {
                 const p = toPage(x, y); x = p.x; y = p.y;
                 state.x = x; state.y = y;
+                const lockedEl = document.pointerLockElement;
+                if (!lockedEl) {
+                    const t = targetAt(x, y);
+                    if (isFrame(t)) {
+                        state.keyFrame = t;
+                        forward(t, 'down', x, y, [button]);
+                        return;
+                    }
+                    state.keyFrame = null;
+                }
                 state.buttons |= (button === 2 ? 2 : button === 1 ? 4 : 1);
                 const locked = document.pointerLockElement;
                 const target = locked || targetAt(x, y);
@@ -111,6 +158,15 @@ enum InputBridge {
             up: function (x, y, button, clickCount) {
                 const p = toPage(x, y); x = p.x; y = p.y;
                 state.x = x; state.y = y;
+                // Forward the release only if the press was also forwarded
+                // (no button is held in this frame); otherwise finish the local drag.
+                if (!document.pointerLockElement && !state.buttons) {
+                    const t = targetAt(x, y);
+                    if (isFrame(t)) {
+                        forward(t, 'up', x, y, [button, clickCount]);
+                        return;
+                    }
+                }
                 state.buttons &= ~(button === 2 ? 2 : button === 1 ? 4 : 1);
                 const locked = document.pointerLockElement;
                 const target = locked || targetAt(x, y);
@@ -126,9 +182,13 @@ enum InputBridge {
 
             wheel: function (x, y, dx, dy) {
                 const p = toPage(x, y); x = p.x; y = p.y;
-                const s = window.visualViewport ? window.visualViewport.scale : 1;
+                const s = scaleFactor();
                 dx /= s; dy /= s;
                 const target = document.pointerLockElement || targetAt(x, y);
+                if (!document.pointerLockElement && isFrame(target)) {
+                    forward(target, 'wheel', x, y, [dx, dy]);
+                    return;
+                }
                 const ev = new WheelEvent('wheel', common(x, y, {
                     deltaX: dx, deltaY: dy, deltaMode: 0,
                 }));
@@ -138,6 +198,15 @@ enum InputBridge {
 
             key: function (type, key, code, keyCode, mods) {
                 mods = mods || {};
+                // Route keys to the frame the user last clicked in.
+                const kf = state.keyFrame;
+                if (kf && kf.isConnected) {
+                    try {
+                        kf.contentWindow.postMessage(
+                            { __gbCall: 'key', args: [type, key, code, keyCode, mods] }, '*');
+                        return;
+                    } catch (e) {}
+                }
                 const target = document.activeElement || document.body;
                 const ev = new KeyboardEvent(type, {
                     bubbles: true, cancelable: true, composed: true, view: window,
@@ -183,7 +252,17 @@ enum InputBridge {
 
         window.__gb = bridge;
 
-        // Notify native code about pointer-lock transitions so the cursor overlay can hide.
+        // Receive calls forwarded from a parent frame (iframe support).
+        window.addEventListener('message', function (e) {
+            const d = e.data;
+            if (!d || !d.__gbCall || typeof bridge[d.__gbCall] !== 'function') { return; }
+            state.raw = true;
+            try { bridge[d.__gbCall].apply(null, d.args || []); }
+            finally { state.raw = false; }
+        });
+
+        // Notify native code about pointer-lock transitions so the cursor overlay
+        // can hide. Message handlers are reachable from subframes too.
         document.addEventListener('pointerlockchange', function () {
             try {
                 window.webkit.messageHandlers.gbEvents.postMessage({

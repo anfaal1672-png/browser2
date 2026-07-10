@@ -132,7 +132,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let userScript = WKUserScript(
             source: InputBridge.script,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
+            forMainFrameOnly: false   // inject into iframes so games inside them get events
         )
         config.userContentController.addUserScript(userScript)
         config.userContentController.add(ScriptMessageProxy(self), name: "gbEvents")
