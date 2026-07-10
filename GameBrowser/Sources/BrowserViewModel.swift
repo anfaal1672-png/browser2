@@ -42,8 +42,12 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var inputMode: InputMode = .trackpad
 
     var cursorMode: Bool { inputMode != .touch }
-    @Published var keyboardVisible: Bool = false
-    @Published var fullKeyboard: Bool = false
+    @Published var keyboardVisible: Bool = false {
+        didSet { if !keyboardVisible { releaseAllKeys() } }
+    }
+    @Published var fullKeyboard: Bool = false {
+        didSet { releaseAllKeys() }   // avoid stuck keys when the layout swaps mid-press
+    }
     @Published var pointerLocked: Bool = false
     @Published var dragLocked: Bool = false
     @Published var pressedKeys: Set<InputBridge.Key> = []
@@ -67,7 +71,14 @@ final class BrowserViewModel: NSObject, ObservableObject {
         var url: String
     }
 
-    var webViewSize: CGSize = .zero
+    var webViewSize: CGSize = .zero {
+        didSet {
+            // Keep the cursor on screen after rotation / layout changes.
+            if webViewSize != oldValue, webViewSize != .zero {
+                cursorPosition = clamp(cursorPosition)
+            }
+        }
+    }
 
     private var observers: [NSKeyValueObservation] = []
     private var lastClickTime: Date = .distantPast
@@ -159,6 +170,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func selectTab(_ index: Int) {
         guard tabs.indices.contains(index) else { return }
         snapshotActiveTab()
+        releaseAllKeys()
+        if dragLocked { mouseUp() }   // don't leave a mouse button held in the old tab
         activeTabIndex = index
         bindObservers(to: tabs[index].webView)
         pointerLocked = false
@@ -185,6 +198,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         guard tabs.indices.contains(index) else { return }
         let tab = tabs.remove(at: index)
         tab.webView.stopLoading()
+        tab.webView.setAllMediaPlaybackSuspended(true)
         if tabs.isEmpty {
             newTab()
         } else {
@@ -337,6 +351,12 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func keyUp(_ key: InputBridge.Key) {
         pressedKeys.remove(key)
         sendKey(type: "keyup", key)
+    }
+
+    /// Send keyup for everything still held (tab switch, keyboard hide).
+    func releaseAllKeys() {
+        for key in pressedKeys { sendKey(type: "keyup", key) }
+        pressedKeys.removeAll()
     }
 
     func tapKey(_ key: InputBridge.Key) {
