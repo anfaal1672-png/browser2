@@ -41,23 +41,11 @@ final class TrackpadUIView: UIView {
     private let longPressDelay: TimeInterval = 0.45
     private let scrollSpeed: CGFloat = 2.2
 
-    private var isDirect: Bool { viewModel?.inputMode == .direct }
-
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches where !activeTouches.contains(touch) {
             activeTouches.append(touch)
         }
         lastPoints = activeTouches.map { $0.location(in: self) }
-
-        if isDirect {
-            // Absolute mode: press = mouse down at the touch point.
-            if activeTouches.count == 1, let viewModel {
-                viewModel.setCursor(to: lastPoints[0])
-                viewModel.mouseDown()
-                isDragging = true
-            }
-            return
-        }
 
         if activeTouches.count == 1 {
             touchStartTime = Date()
@@ -76,11 +64,6 @@ final class TrackpadUIView: UIView {
         let points = activeTouches.map { $0.location(in: self) }
         defer { lastPoints = points }
         guard points.count == lastPoints.count, !points.isEmpty else { return }
-
-        if isDirect {
-            if activeTouches.count == 1 { viewModel.setCursor(to: points[0]) }
-            return
-        }
 
         if activeTouches.count >= 2 {
             // Two-finger scroll: average delta of both fingers.

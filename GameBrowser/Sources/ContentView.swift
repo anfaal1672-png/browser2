@@ -28,6 +28,9 @@ struct ContentView: View {
                         }
                     }
                 }
+                .overlay(alignment: .trailing) {
+                    if viewModel.cursorMode { scrollStrip }
+                }
                 .onAppear { viewModel.webViewSize = geo.size }
                 .onChange(of: geo.size) { _, newSize in viewModel.webViewSize = newSize }
                 .overlay(alignment: .topTrailing) {
@@ -76,6 +79,41 @@ struct ContentView: View {
                 .background(.black.opacity(0.45), in: Circle())
                 .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 0.5))
         }
+    }
+
+    // MARK: - Scroll strip
+
+    @State private var scrollDragOffset: CGFloat = 0
+    @State private var scrollStripActive = false
+
+    /// Vertical strip on the right edge: drag to send mouse-wheel scrolling.
+    private var scrollStrip: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "chevron.up")
+            Image(systemName: "line.3.horizontal")
+            Image(systemName: "chevron.down")
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(.white.opacity(scrollStripActive ? 0.95 : 0.55))
+        .frame(width: 26, height: 110)
+        .background(.black.opacity(scrollStripActive ? 0.5 : 0.3),
+                    in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 0.5))
+        .padding(.trailing, 4)
+        .contentShape(Capsule())
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    scrollStripActive = true
+                    let delta = value.translation.height - scrollDragOffset
+                    scrollDragOffset = value.translation.height
+                    viewModel.scroll(dx: 0, dy: -delta * 3)
+                }
+                .onEnded { _ in
+                    scrollDragOffset = 0
+                    scrollStripActive = false
+                }
+        )
     }
 
     // MARK: - Top toolbar
@@ -403,6 +441,7 @@ struct TabCard: View {
                         Image(uiImage: snapshot)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
+                            .allowsHitTesting(false)
                     } else {
                         Rectangle().fill(Color.primary.opacity(0.06))
                         Image(systemName: "globe")
@@ -430,6 +469,9 @@ struct TabCard: View {
                     .strokeBorder(isActive ? Color.cyan : Color.primary.opacity(0.12),
                                   lineWidth: isActive ? 2 : 1)
             )
+            // The .fill snapshot overflows its frame; without an explicit
+            // content shape the overflow steals taps from neighboring cards.
+            .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
         .overlay(alignment: .topTrailing) {
