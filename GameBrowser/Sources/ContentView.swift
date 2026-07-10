@@ -155,11 +155,14 @@ struct ContentView: View {
     private var controlBar: some View {
         HStack(spacing: 0) {
             controlButton(
-                icon: viewModel.cursorMode ? "cursorarrow" : "hand.tap",
-                label: viewModel.cursorMode ? "マウス" : "タッチ",
+                icon: viewModel.inputMode.icon,
+                label: viewModel.inputMode.label,
                 active: viewModel.cursorMode
             ) {
-                viewModel.cursorMode.toggle()
+                let all = BrowserViewModel.InputMode.allCases
+                let next = (viewModel.inputMode.rawValue + 1) % all.count
+                viewModel.inputMode = all[next]
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
 
             controlButton(

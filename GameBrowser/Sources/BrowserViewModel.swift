@@ -17,7 +17,31 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     /// Cursor position in web-view coordinates.
     @Published var cursorPosition: CGPoint = CGPoint(x: 200, y: 200)
-    @Published var cursorMode: Bool = true
+
+    enum InputMode: Int, CaseIterable {
+        case trackpad   // relative cursor, laptop-style
+        case direct     // absolute: touches dispatch mouse events at the touch point
+        case touch      // native WKWebView touch handling
+
+        var icon: String {
+            switch self {
+            case .trackpad: return "cursorarrow"
+            case .direct: return "hand.point.up.left.and.text"
+            case .touch: return "hand.tap"
+            }
+        }
+        var label: String {
+            switch self {
+            case .trackpad: return "マウス"
+            case .direct: return "ダイレクト"
+            case .touch: return "タッチ"
+            }
+        }
+    }
+
+    @Published var inputMode: InputMode = .trackpad
+
+    var cursorMode: Bool { inputMode != .touch }
     @Published var keyboardVisible: Bool = false
     @Published var fullKeyboard: Bool = false
     @Published var pointerLocked: Bool = false
@@ -187,6 +211,15 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let dx = delta.width * cursorSensitivity
         let dy = delta.height * cursorSensitivity
         cursorPosition = clamp(CGPoint(x: cursorPosition.x + dx, y: cursorPosition.y + dy))
+        js("window.__gb && __gb.move(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(f(dx)), \(f(dy)))")
+    }
+
+    /// Absolute positioning used by direct-touch mode.
+    func setCursor(to point: CGPoint) {
+        let old = cursorPosition
+        cursorPosition = clamp(point)
+        let dx = cursorPosition.x - old.x
+        let dy = cursorPosition.y - old.y
         js("window.__gb && __gb.move(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(f(dx)), \(f(dy)))")
     }
 
