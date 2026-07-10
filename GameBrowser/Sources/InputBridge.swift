@@ -16,6 +16,14 @@ enum InputBridge {
             lastDownTarget: null,
         };
 
+        // Native code sends coordinates in view points; desktop-mode pages are
+        // zoomed out, so convert to CSS/layout-viewport coordinates.
+        function toPage(x, y) {
+            const v = window.visualViewport;
+            if (!v) { return { x: x, y: y }; }
+            return { x: x / v.scale + v.offsetLeft, y: y / v.scale + v.offsetTop };
+        }
+
         function targetAt(x, y) {
             let el = document.elementFromPoint(x, y);
             return el || document.documentElement;
@@ -70,6 +78,9 @@ enum InputBridge {
 
         const bridge = {
             move: function (x, y, dx, dy) {
+                const p = toPage(x, y); x = p.x; y = p.y;
+                const s = window.visualViewport ? window.visualViewport.scale : 1;
+                dx = (dx || 0) / s; dy = (dy || 0) / s;
                 state.x = x; state.y = y;
                 const locked = document.pointerLockElement;
                 const target = locked || targetAt(x, y);
@@ -80,6 +91,7 @@ enum InputBridge {
             },
 
             down: function (x, y, button) {
+                const p = toPage(x, y); x = p.x; y = p.y;
                 state.x = x; state.y = y;
                 state.buttons |= (button === 2 ? 2 : button === 1 ? 4 : 1);
                 const locked = document.pointerLockElement;
@@ -97,6 +109,7 @@ enum InputBridge {
             },
 
             up: function (x, y, button, clickCount) {
+                const p = toPage(x, y); x = p.x; y = p.y;
                 state.x = x; state.y = y;
                 state.buttons &= ~(button === 2 ? 2 : button === 1 ? 4 : 1);
                 const locked = document.pointerLockElement;
@@ -112,6 +125,9 @@ enum InputBridge {
             },
 
             wheel: function (x, y, dx, dy) {
+                const p = toPage(x, y); x = p.x; y = p.y;
+                const s = window.visualViewport ? window.visualViewport.scale : 1;
+                dx /= s; dy /= s;
                 const target = document.pointerLockElement || targetAt(x, y);
                 const ev = new WheelEvent('wheel', common(x, y, {
                     deltaX: dx, deltaY: dy, deltaMode: 0,
