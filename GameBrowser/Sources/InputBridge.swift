@@ -16,6 +16,8 @@ enum InputBridge {
             lastDownTarget: null,
             keyFrame: null,   // iframe element that should receive key events
             raw: false,       // true while handling a call forwarded from a parent frame
+            captured: null,   // element holding pointer capture for our pointerId
+            dnd: null,        // in-progress emulated HTML5 drag-and-drop
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
@@ -107,6 +109,75 @@ enum InputBridge {
             state.lastTarget = target;
         }
 
+        // Pointer-capture support: many drag implementations call
+        // setPointerCapture and expect subsequent pointer events to be
+        // retargeted to the capturing element. Emulate that for our pointer.
+        try {
+            const proto = Element.prototype;
+            const origSet = proto.setPointerCapture;
+            const origRel = proto.releasePointerCapture;
+            const origHas = proto.hasPointerCapture;
+            proto.setPointerCapture = function (id) {
+                if (id === 1) {
+                    state.captured = this;
+                    try { origSet.call(this, id); } catch (e) {}
+                    return;
+                }
+                return origSet.call(this, id);
+            };
+            proto.releasePointerCapture = function (id) {
+                if (id === 1) {
+                    state.captured = null;
+                    try { origRel.call(this, id); } catch (e) {}
+                    return;
+                }
+                return origRel.call(this, id);
+            };
+            proto.hasPointerCapture = function (id) {
+                if (id === 1) { return state.captured === this; }
+                return origHas.call(this, id);
+            };
+        } catch (e) {}
+
+        // Emulated HTML5 drag-and-drop: synthetic mouse events never trigger
+        // the browser's native DnD, so fire drag events ourselves.
+        function fireDrag(type, target, x, y, dt) {
+            try {
+                const ev = new DragEvent(type, common(x, y, { dataTransfer: dt }));
+                return !target.dispatchEvent(ev);   // true if preventDefault'ed
+            } catch (e) {
+                try {
+                    const ev = document.createEvent('Event');
+                    ev.initEvent(type, true, true);
+                    ev.dataTransfer = dt;
+                    ev.clientX = x; ev.clientY = y;
+                    return !target.dispatchEvent(ev);
+                } catch (e2) { return false; }
+            }
+        }
+
+        function updateDnd(x, y) {
+            if (!(state.buttons & 1)) { return; }
+            if (!state.dnd && state.lastDownTarget && state.lastDownTarget.closest) {
+                const src = state.lastDownTarget.closest('[draggable="true"]');
+                if (src) {
+                    let dt = null;
+                    try { dt = new DataTransfer(); } catch (e) {}
+                    state.dnd = { src: src, dt: dt, over: null, canDrop: false };
+                    fireDrag('dragstart', src, x, y, dt);
+                }
+            }
+            if (state.dnd) {
+                const over = targetAt(x, y);
+                if (over !== state.dnd.over) {
+                    if (state.dnd.over) { fireDrag('dragleave', state.dnd.over, x, y, state.dnd.dt); }
+                    fireDrag('dragenter', over, x, y, state.dnd.dt);
+                    state.dnd.over = over;
+                }
+                state.dnd.canDrop = fireDrag('dragover', over, x, y, state.dnd.dt);
+            }
+        }
+
         const bridge = {
             move: function (x, y, dx, dy) {
                 const p = toPage(x, y); x = p.x; y = p.y;
@@ -114,17 +185,18 @@ enum InputBridge {
                 dx = (dx || 0) / s; dy = (dy || 0) / s;
                 state.x = x; state.y = y;
                 const locked = document.pointerLockElement;
-                const target = locked || targetAt(x, y);
+                const target = locked || state.captured || targetAt(x, y);
                 // Keep drags anchored to the outer document: only hand the move to
                 // an iframe when no button is held in this frame.
-                if (!locked && !state.buttons && isFrame(target)) {
+                if (!locked && !state.captured && !state.buttons && isFrame(target)) {
                     forward(target, 'move', x, y, [dx, dy]);
                     return;
                 }
                 const extra = { movementX: dx || 0, movementY: dy || 0 };
-                if (!locked) { hoverTransition(target, x, y); }
+                if (!locked && !state.captured) { hoverTransition(target, x, y); }
                 firePointer('pointermove', target, x, y, -1, extra);
                 fireMouse('mousemove', target, x, y, 0, extra);
+                updateDnd(x, y);
             },
 
             down: function (x, y, button) {
@@ -168,11 +240,28 @@ enum InputBridge {
                     }
                 }
                 state.buttons &= ~(button === 2 ? 2 : button === 1 ? 4 : 1);
+
+                // Finish an emulated HTML5 drag-and-drop instead of clicking.
+                if (button === 0 && state.dnd) {
+                    const dropTarget = targetAt(x, y);
+                    if (state.dnd.canDrop) { fireDrag('drop', dropTarget, x, y, state.dnd.dt); }
+                    fireDrag('dragend', state.dnd.src, x, y, state.dnd.dt);
+                    state.dnd = null;
+                    state.captured = null;
+                    return;
+                }
+
                 const locked = document.pointerLockElement;
-                const target = locked || targetAt(x, y);
+                const captured = state.captured;
+                const target = locked || captured || targetAt(x, y);
                 firePointer('pointerup', target, x, y, button);
                 fireMouse('mouseup', target, x, y, button);
-                if (button === 0 && (state.lastDownTarget === target || locked)) {
+                if (captured && button === 0) {
+                    // Implicit release at pointerup, per the pointer events spec.
+                    state.captured = null;
+                    firePointer('lostpointercapture', captured, x, y, -1);
+                }
+                if (button === 0 && (state.lastDownTarget === target || locked || captured)) {
                     fireMouse('click', target, x, y, 0);
                     if (clickCount === 2) { fireMouse('dblclick', target, x, y, 0); }
                 } else if (button === 2) {
