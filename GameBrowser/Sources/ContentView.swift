@@ -81,37 +81,53 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Scroll strip
+    // MARK: - Scroll wheel
 
-    @State private var scrollDragOffset: CGFloat = 0
-    @State private var scrollStripActive = false
+    /// Points of finger travel per emulated wheel notch.
+    private static let wheelNotchDistance: CGFloat = 14
+    /// Standard wheel notch delta (WheelEvent.deltaY per click).
+    private static let wheelNotchDelta: CGFloat = 120
 
-    /// Vertical strip on the right edge: drag to send mouse-wheel scrolling.
+    @State private var wheelAccumulated: CGFloat = 0
+    @State private var wheelLastDrag: CGFloat = 0
+    @State private var wheelActive = false
+
+    /// Emulated mouse wheel on the right edge. Dragging rolls the wheel:
+    /// each notch fires a WheelEvent with the classic ±120 deltaY, with a
+    /// haptic tick per notch — drag down to scroll down, like a real wheel.
     private var scrollStrip: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "chevron.up")
-            Image(systemName: "line.3.horizontal")
-            Image(systemName: "chevron.down")
+        VStack(spacing: 5) {
+            ForEach(0..<5, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(.white.opacity(wheelActive ? 0.9 : 0.5))
+                    .frame(width: 14, height: 2.5)
+            }
         }
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.white.opacity(scrollStripActive ? 0.95 : 0.55))
-        .frame(width: 26, height: 110)
-        .background(.black.opacity(scrollStripActive ? 0.5 : 0.3),
-                    in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 0.5))
+        .frame(width: 28, height: 96)
+        .background(.black.opacity(wheelActive ? 0.55 : 0.3), in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.25), lineWidth: 0.5))
         .padding(.trailing, 4)
         .contentShape(Capsule())
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { value in
-                    scrollStripActive = true
-                    let delta = value.translation.height - scrollDragOffset
-                    scrollDragOffset = value.translation.height
-                    viewModel.scroll(dx: 0, dy: -delta * 3)
+                    wheelActive = true
+                    let delta = value.translation.height - wheelLastDrag
+                    wheelLastDrag = value.translation.height
+                    wheelAccumulated += delta
+
+                    // Emit whole notches as the finger travels.
+                    while abs(wheelAccumulated) >= Self.wheelNotchDistance {
+                        let direction: CGFloat = wheelAccumulated > 0 ? 1 : -1
+                        viewModel.scroll(dx: 0, dy: direction * Self.wheelNotchDelta)
+                        wheelAccumulated -= direction * Self.wheelNotchDistance
+                        UISelectionFeedbackGenerator().selectionChanged()
+                    }
                 }
                 .onEnded { _ in
-                    scrollDragOffset = 0
-                    scrollStripActive = false
+                    wheelLastDrag = 0
+                    wheelAccumulated = 0
+                    wheelActive = false
                 }
         )
     }
