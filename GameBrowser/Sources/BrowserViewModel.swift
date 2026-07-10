@@ -122,6 +122,37 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     // MARK: - Tab persistence
 
+    private static let snapshotsDir: URL = {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TabSnapshots", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    private func snapshotFile(_ index: Int) -> URL {
+        Self.snapshotsDir.appendingPathComponent("\(index).jpg")
+    }
+
+    /// Persist thumbnails so the tab switcher isn't blank after a relaunch.
+    private func saveSnapshots() {
+        let images = tabs.map(\.snapshot)
+        let dir = Self.snapshotsDir
+        Task.detached(priority: .utility) {
+            for (i, image) in images.enumerated() {
+                let file = dir.appendingPathComponent("\(i).jpg")
+                if let data = image?.jpegData(compressionQuality: 0.5) {
+                    try? data.write(to: file, options: .atomic)
+                }
+            }
+            // Drop stale files from closed tabs.
+            var i = images.count
+            while FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(i).jpg").path) {
+                try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(i).jpg"))
+                i += 1
+            }
+        }
+    }
+
     private func saveTabs() {
         let urls = tabs.map {
             ($0.webView.url ?? $0.pendingURL ?? Self.homeURL).absoluteString
@@ -129,6 +160,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let defaults = UserDefaults.standard
         defaults.set(urls, forKey: "savedTabs")
         defaults.set(activeTabIndex, forKey: "savedActiveTabIndex")
+        saveSnapshots()
     }
 
     private func restoreTabs() {
@@ -139,9 +171,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
             newTab()
             return
         }
-        for url in urls {
+        for (i, url) in urls.enumerated() {
             let tab = Tab(webView: makeWebView())
             tab.pendingURL = url
+            tab.snapshot = UIImage(contentsOfFile: snapshotFile(i).path)
             tabs.append(tab)
             tab.webView.load(URLRequest(url: url))
         }
@@ -229,8 +262,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let tab = tabs[activeTabIndex]
         let config = WKSnapshotConfiguration()
         config.afterScreenUpdates = false
-        tab.webView.takeSnapshot(with: config) { image, _ in
-            if let image { tab.snapshot = image }
+        tab.webView.takeSnapshot(with: config) { [weak self] image, _ in
+            if let image {
+                tab.snapshot = image
+                self?.saveSnapshots()
+            }
         }
     }
 
