@@ -83,19 +83,20 @@ struct ContentView: View {
 
     // MARK: - Scroll buttons
 
-    /// Standard wheel notch delta (WheelEvent.deltaY per click).
-    private static let wheelNotchDelta: CGFloat = 120
-
-    /// Up / down mouse-wheel buttons on the right edge. Tap = one wheel
-    /// notch (deltaY ±120); press and hold to keep scrolling.
+    /// Up / down scroll buttons on the right edge. Holding scrolls smoothly
+    /// with acceleration; releasing decelerates to a stop.
     private var scrollStrip: some View {
         VStack(spacing: 8) {
-            ScrollRepeatButton(icon: "chevron.up") {
-                viewModel.scroll(dx: 0, dy: -Self.wheelNotchDelta)
-            }
-            ScrollRepeatButton(icon: "chevron.down") {
-                viewModel.scroll(dx: 0, dy: Self.wheelNotchDelta)
-            }
+            ScrollRepeatButton(
+                icon: "chevron.up",
+                onPress: { viewModel.startSmoothScroll(direction: -1) },
+                onRelease: { viewModel.endSmoothScroll() }
+            )
+            ScrollRepeatButton(
+                icon: "chevron.down",
+                onPress: { viewModel.startSmoothScroll(direction: 1) },
+                onRelease: { viewModel.endSmoothScroll() }
+            )
         }
         .padding(.trailing, 4)
     }
@@ -471,13 +472,13 @@ struct TabCard: View {
     }
 }
 
-/// Round button that fires immediately on touch, then auto-repeats while held.
+/// Round button that reports press and release, for hold-to-scroll controls.
 struct ScrollRepeatButton: View {
     let icon: String
-    let action: () -> Void
+    let onPress: () -> Void
+    let onRelease: () -> Void
 
     @State private var pressed = false
-    @State private var repeatTimer: Timer?
 
     var body: some View {
         Image(systemName: icon)
@@ -493,18 +494,11 @@ struct ScrollRepeatButton: View {
                         guard !pressed else { return }
                         pressed = true
                         UISelectionFeedbackGenerator().selectionChanged()
-                        action()
-                        // Short delay before auto-repeat kicks in.
-                        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
-                            repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-                                action()
-                            }
-                        }
+                        onPress()
                     }
                     .onEnded { _ in
                         pressed = false
-                        repeatTimer?.invalidate()
-                        repeatTimer = nil
+                        onRelease()
                     }
             )
     }

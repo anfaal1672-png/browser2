@@ -414,6 +414,31 @@ final class BrowserViewModel: NSObject, ObservableObject {
         js("window.__gb && __gb.wheel(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(f(dx)), \(f(dy)))")
     }
 
+    // MARK: - Smooth scrolling
+
+    private var scrollTimer: Timer?
+    private var scrollDirection: CGFloat = 0
+
+    /// Constant smooth-scroll speed in px/s while a scroll button is held.
+    private static let smoothScrollSpeed: CGFloat = 700
+
+    /// Scroll smoothly at constant speed in `direction` (+1 down / -1 up).
+    func startSmoothScroll(direction: CGFloat) {
+        scrollDirection = direction
+        guard scrollTimer == nil else { return }
+        scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.scroll(dx: 0, dy: self.scrollDirection * Self.smoothScrollSpeed / 60)
+            }
+        }
+    }
+
+    func endSmoothScroll() {
+        scrollTimer?.invalidate()
+        scrollTimer = nil
+    }
+
     func toggleDragLock() {
         dragLocked.toggle()
         if dragLocked { mouseDown() } else { mouseUp() }
