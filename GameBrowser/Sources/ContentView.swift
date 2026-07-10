@@ -4,11 +4,14 @@ struct ContentView: View {
     @StateObject private var viewModel = BrowserViewModel()
     @FocusState private var urlFieldFocused: Bool
     @State private var showSettings = false
+    @State private var showBookmarks = false
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            progressBar
+            if !viewModel.immersive {
+                toolbar
+                progressBar
+            }
 
             GeometryReader { geo in
                 ZStack {
@@ -26,6 +29,9 @@ struct ContentView: View {
                 }
                 .onAppear { viewModel.webViewSize = geo.size }
                 .onChange(of: geo.size) { _, newSize in viewModel.webViewSize = newSize }
+                .overlay(alignment: .topTrailing) {
+                    if viewModel.immersive { immersiveExitButton }
+                }
             }
             .clipped()
 
@@ -34,12 +40,40 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            controlBar
+            if !viewModel.immersive {
+                controlBar
+            }
         }
         .background(Color.black.ignoresSafeArea())
         .animation(.easeInOut(duration: 0.2), value: viewModel.keyboardVisible)
         .animation(.easeInOut(duration: 0.2), value: viewModel.fullKeyboard)
+        .animation(.easeInOut(duration: 0.25), value: viewModel.immersive)
         .sheet(isPresented: $showSettings) { settingsSheet }
+        .sheet(isPresented: $showBookmarks) { bookmarksSheet }
+    }
+
+    /// Small floating controls shown in immersive mode.
+    private var immersiveExitButton: some View {
+        HStack(spacing: 8) {
+            floatingButton(icon: "keyboard") {
+                viewModel.keyboardVisible.toggle()
+            }
+            floatingButton(icon: "arrow.down.right.and.arrow.up.left") {
+                viewModel.immersive = false
+            }
+        }
+        .padding(10)
+    }
+
+    private func floatingButton(icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .padding(9)
+                .background(.black.opacity(0.45), in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 0.5))
+        }
     }
 
     // MARK: - Top toolbar
@@ -83,6 +117,15 @@ struct ContentView: View {
 
             Button(action: viewModel.isLoading ? { viewModel.webView.stopLoading() } : viewModel.reload) {
                 Image(systemName: viewModel.isLoading ? "xmark" : "arrow.clockwise")
+            }
+
+            Button(action: viewModel.toggleBookmark) {
+                Image(systemName: viewModel.isCurrentPageBookmarked ? "star.fill" : "star")
+                    .foregroundStyle(viewModel.isCurrentPageBookmarked ? Color.yellow : Color.white)
+            }
+
+            Button { showBookmarks = true } label: {
+                Image(systemName: "book")
             }
 
             Button { showSettings = true } label: {
@@ -162,6 +205,14 @@ struct ContentView: View {
                 viewModel.fullKeyboard.toggle()
                 if viewModel.fullKeyboard { viewModel.keyboardVisible = true }
             }
+
+            controlButton(
+                icon: "arrow.up.left.and.arrow.down.right",
+                label: "全画面",
+                active: false
+            ) {
+                viewModel.immersive = true
+            }
         }
         .padding(.vertical, 4)
         .padding(.bottom, 2)
@@ -181,6 +232,48 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 5)
         }
+    }
+
+    // MARK: - Bookmarks
+
+    private var bookmarksSheet: some View {
+        NavigationStack {
+            List {
+                if viewModel.bookmarks.isEmpty {
+                    Text("ブックマークはまだありません。\nツールバーの ★ で追加できます。")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 14))
+                }
+                ForEach(viewModel.bookmarks) { bookmark in
+                    Button {
+                        viewModel.open(bookmark)
+                        showBookmarks = false
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(bookmark.title)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text(bookmark.url)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .onDelete { viewModel.bookmarks.remove(atOffsets: $0) }
+                .onMove { viewModel.bookmarks.move(fromOffsets: $0, toOffset: $1) }
+            }
+            .navigationTitle("ブックマーク")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { EditButton() }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { showBookmarks = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     // MARK: - Settings

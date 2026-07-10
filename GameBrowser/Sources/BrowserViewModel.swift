@@ -23,7 +23,25 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var pointerLocked: Bool = false
     @Published var dragLocked: Bool = false
     @Published var pressedKeys: Set<InputBridge.Key> = []
-    @Published var cursorSensitivity: Double = 1.4
+    @Published var immersive: Bool = false
+
+    @Published var cursorSensitivity: Double {
+        didSet { UserDefaults.standard.set(cursorSensitivity, forKey: "cursorSensitivity") }
+    }
+
+    @Published var bookmarks: [Bookmark] {
+        didSet {
+            if let data = try? JSONEncoder().encode(bookmarks) {
+                UserDefaults.standard.set(data, forKey: "bookmarks")
+            }
+        }
+    }
+
+    struct Bookmark: Codable, Identifiable, Equatable {
+        var id = UUID()
+        var title: String
+        var url: String
+    }
 
     var webViewSize: CGSize = .zero
 
@@ -42,6 +60,22 @@ final class BrowserViewModel: NSObject, ObservableObject {
     // MARK: - Init
 
     override init() {
+        let defaults = UserDefaults.standard
+        let savedSensitivity = defaults.double(forKey: "cursorSensitivity")
+        cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
+        if let data = defaults.data(forKey: "bookmarks"),
+           let saved = try? JSONDecoder().decode([Bookmark].self, from: data) {
+            bookmarks = saved
+        } else {
+            // Starter bookmarks: popular PC browser game portals.
+            bookmarks = [
+                Bookmark(title: "CrazyGames", url: "https://www.crazygames.com"),
+                Bookmark(title: "Poki", url: "https://poki.com"),
+                Bookmark(title: "itch.io", url: "https://itch.io/games/platform-web"),
+                Bookmark(title: "Miniclip", url: "https://www.miniclip.com"),
+            ]
+        }
+
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
@@ -117,6 +151,24 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }
     func goHome() { webView.load(URLRequest(url: Self.homeURL)) }
+
+    func open(_ bookmark: Bookmark) {
+        if let url = URL(string: bookmark.url) { webView.load(URLRequest(url: url)) }
+    }
+
+    var isCurrentPageBookmarked: Bool {
+        guard let url = currentURL?.absoluteString else { return false }
+        return bookmarks.contains { $0.url == url }
+    }
+
+    func toggleBookmark() {
+        guard let url = currentURL?.absoluteString else { return }
+        if let index = bookmarks.firstIndex(where: { $0.url == url }) {
+            bookmarks.remove(at: index)
+        } else {
+            bookmarks.append(Bookmark(title: pageTitle.isEmpty ? url : pageTitle, url: url))
+        }
+    }
 
     // MARK: - Virtual mouse
 
