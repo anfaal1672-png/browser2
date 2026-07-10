@@ -81,55 +81,23 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Scroll wheel
+    // MARK: - Scroll buttons
 
-    /// Points of finger travel per emulated wheel notch.
-    private static let wheelNotchDistance: CGFloat = 14
     /// Standard wheel notch delta (WheelEvent.deltaY per click).
     private static let wheelNotchDelta: CGFloat = 120
 
-    @State private var wheelAccumulated: CGFloat = 0
-    @State private var wheelLastDrag: CGFloat = 0
-    @State private var wheelActive = false
-
-    /// Emulated mouse wheel on the right edge. Dragging rolls the wheel:
-    /// each notch fires a WheelEvent with the classic ±120 deltaY, with a
-    /// haptic tick per notch — drag down to scroll down, like a real wheel.
+    /// Up / down mouse-wheel buttons on the right edge. Tap = one wheel
+    /// notch (deltaY ±120); press and hold to keep scrolling.
     private var scrollStrip: some View {
-        VStack(spacing: 5) {
-            ForEach(0..<5, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(.white.opacity(wheelActive ? 0.9 : 0.5))
-                    .frame(width: 14, height: 2.5)
+        VStack(spacing: 8) {
+            ScrollRepeatButton(icon: "chevron.up") {
+                viewModel.scroll(dx: 0, dy: -Self.wheelNotchDelta)
+            }
+            ScrollRepeatButton(icon: "chevron.down") {
+                viewModel.scroll(dx: 0, dy: Self.wheelNotchDelta)
             }
         }
-        .frame(width: 28, height: 96)
-        .background(.black.opacity(wheelActive ? 0.55 : 0.3), in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.25), lineWidth: 0.5))
         .padding(.trailing, 4)
-        .contentShape(Capsule())
-        .gesture(
-            DragGesture(minimumDistance: 1)
-                .onChanged { value in
-                    wheelActive = true
-                    let delta = value.translation.height - wheelLastDrag
-                    wheelLastDrag = value.translation.height
-                    wheelAccumulated += delta
-
-                    // Emit whole notches as the finger travels.
-                    while abs(wheelAccumulated) >= Self.wheelNotchDistance {
-                        let direction: CGFloat = wheelAccumulated > 0 ? 1 : -1
-                        viewModel.scroll(dx: 0, dy: direction * Self.wheelNotchDelta)
-                        wheelAccumulated -= direction * Self.wheelNotchDistance
-                        UISelectionFeedbackGenerator().selectionChanged()
-                    }
-                }
-                .onEnded { _ in
-                    wheelLastDrag = 0
-                    wheelAccumulated = 0
-                    wheelActive = false
-                }
-        )
     }
 
     // MARK: - Top toolbar
@@ -500,5 +468,44 @@ struct TabCard: View {
             }
             .padding(6)
         }
+    }
+}
+
+/// Round button that fires immediately on touch, then auto-repeats while held.
+struct ScrollRepeatButton: View {
+    let icon: String
+    let action: () -> Void
+
+    @State private var pressed = false
+    @State private var repeatTimer: Timer?
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(.white.opacity(pressed ? 1 : 0.75))
+            .frame(width: 40, height: 40)
+            .background(.black.opacity(pressed ? 0.65 : 0.35), in: Circle())
+            .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 0.5))
+            .contentShape(Circle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard !pressed else { return }
+                        pressed = true
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        action()
+                        // Short delay before auto-repeat kicks in.
+                        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+                            repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                                action()
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        pressed = false
+                        repeatTimer?.invalidate()
+                        repeatTimer = nil
+                    }
+            )
     }
 }
