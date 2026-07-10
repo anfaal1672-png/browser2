@@ -108,6 +108,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
     final class Tab: Identifiable, ObservableObject {
         let id = UUID()
         let webView: WKWebView
+        @Published var snapshot: UIImage?
         init(webView: WKWebView) { self.webView = webView }
 
         @MainActor var title: String {
@@ -157,10 +158,27 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     func selectTab(_ index: Int) {
         guard tabs.indices.contains(index) else { return }
+        snapshotActiveTab()
         activeTabIndex = index
         bindObservers(to: tabs[index].webView)
         pointerLocked = false
         dragLocked = false
+
+        // Silence background tabs (also suspends Web Audio); resume the active one.
+        for (i, tab) in tabs.enumerated() {
+            tab.webView.setAllMediaPlaybackSuspended(i != index)
+        }
+    }
+
+    /// Capture a thumbnail of the currently displayed tab for the tab switcher.
+    func snapshotActiveTab() {
+        guard tabs.indices.contains(activeTabIndex) else { return }
+        let tab = tabs[activeTabIndex]
+        let config = WKSnapshotConfiguration()
+        config.afterScreenUpdates = false
+        tab.webView.takeSnapshot(with: config) { image, _ in
+            if let image { tab.snapshot = image }
+        }
     }
 
     func closeTab(_ index: Int) {

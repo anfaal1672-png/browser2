@@ -252,59 +252,62 @@ struct ContentView: View {
 
     private var tabsSheet: some View {
         NavigationStack {
-            List {
-                ForEach(Array(viewModel.tabs.enumerated()), id: \.element.id) { index, tab in
-                    Button {
-                        viewModel.selectTab(index)
-                        showTabs = false
-                    } label: {
-                        HStack {
-                            Image(systemName: index == viewModel.activeTabIndex
-                                  ? "checkmark.circle.fill" : "globe")
-                                .foregroundStyle(index == viewModel.activeTabIndex
-                                                 ? Color.cyan : Color.secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(tab.title)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(1)
-                                Text(tab.urlString)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                    ForEach(Array(viewModel.tabs.enumerated()), id: \.element.id) { index, tab in
+                        TabCard(
+                            tab: tab,
+                            isActive: index == viewModel.activeTabIndex,
+                            select: {
+                                viewModel.selectTab(index)
+                                showTabs = false
+                            },
+                            close: {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    viewModel.closeTab(index)
+                                }
                             }
-                            Spacer()
-                            Button {
-                                viewModel.closeTab(index)
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                        )
                     }
-                }
-            }
-            .navigationTitle("タブ (\(viewModel.tabs.count))")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+
+                    // New tab card
                     Button {
                         viewModel.newTab()
                         showTabs = false
                     } label: {
-                        Image(systemName: "plus")
+                        VStack(spacing: 8) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 26, weight: .medium))
+                            Text("新しいタブ")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 130)
+                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+                                .foregroundStyle(.secondary.opacity(0.4))
+                        )
                     }
                 }
+                .padding(14)
+            }
+            .navigationTitle("タブ (\(viewModel.tabs.count))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完了") { showTabs = false }
                 }
             }
+            .onAppear { viewModel.snapshotActiveTab() }
         }
         .presentationDetents([.medium, .large])
     }
 
     // MARK: - Bookmarks
+
 
     private var bookmarksSheet: some View {
         NavigationStack {
@@ -382,5 +385,62 @@ struct ContentView: View {
             }
         }
         .presentationDetents([.medium])
+    }
+}
+
+/// Thumbnail card in the tab switcher grid.
+struct TabCard: View {
+    @ObservedObject var tab: BrowserViewModel.Tab
+    let isActive: Bool
+    let select: () -> Void
+    let close: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            VStack(spacing: 0) {
+                ZStack {
+                    if let snapshot = tab.snapshot {
+                        Image(uiImage: snapshot)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Rectangle().fill(Color.primary.opacity(0.06))
+                        Image(systemName: "globe")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(height: 96)
+                .clipped()
+
+                HStack(spacing: 6) {
+                    Text(tab.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 34)
+                .background(.thinMaterial)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(isActive ? Color.cyan : Color.primary.opacity(0.12),
+                                  lineWidth: isActive ? 2 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .topTrailing) {
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(6)
+                    .background(.black.opacity(0.55), in: Circle())
+            }
+            .padding(6)
+        }
     }
 }
