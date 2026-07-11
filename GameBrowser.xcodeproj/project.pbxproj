@@ -19,6 +19,7 @@
 		AA0000012000000B000000AA /* JoystickView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000011000000B000000AA /* JoystickView.swift */; };
 		AA0000012000000C000000AA /* GamepadController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000011000000C000000AA /* GamepadController.swift */; };
 		AA0000012000000D000000AA /* RomajiIME.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000011000000D000000AA /* RomajiIME.swift */; };
+		AA0000012000000E000000AA /* AdBlocker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000011000000E000000AA /* AdBlocker.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		AA0000011000000B000000AA /* JoystickView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoystickView.swift; sourceTree = "<group>"; };
 		AA0000011000000C000000AA /* GamepadController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GamepadController.swift; sourceTree = "<group>"; };
 		AA0000011000000D000000AA /* RomajiIME.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RomajiIME.swift; sourceTree = "<group>"; };
+		AA0000011000000E000000AA /* AdBlocker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdBlocker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -81,6 +83,7 @@
 				AA0000011000000C000000AA /* GamepadController.swift */,
 				AA0000011000000B000000AA /* JoystickView.swift */,
 				AA0000011000000D000000AA /* RomajiIME.swift */,
+				AA0000011000000E000000AA /* AdBlocker.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -173,6 +176,7 @@
 				AA00000120000008000000AA /* InputBridge.swift in Sources */,
 				AA0000012000000C000000AA /* GamepadController.swift in Sources */,
 				AA0000012000000D000000AA /* RomajiIME.swift in Sources */,
+				AA0000012000000E000000AA /* AdBlocker.swift in Sources */,
 				AA0000012000000B000000AA /* JoystickView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

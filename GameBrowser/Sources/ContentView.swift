@@ -635,6 +635,7 @@ struct ContentView: View {
                     }
                 }
                 Section("セキュリティ") {
+                    Toggle("広告ブロック", isOn: $viewModel.adBlockEnabled)
                     Toggle("詐欺Webサイトの警告", isOn: $viewModel.fraudWarning)
                     Toggle("HTTPSを優先(http→https)", isOn: $viewModel.httpsOnly)
                     Toggle("ポップアップをブロック", isOn: $viewModel.blockPopups)

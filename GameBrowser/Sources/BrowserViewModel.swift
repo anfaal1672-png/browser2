@@ -185,6 +185,47 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Content-rule-based ad blocking (network-level, Safari-style).
+    @Published var adBlockEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(adBlockEnabled, forKey: "adBlockEnabled")
+            Task { [weak self] in
+                await self?.applyAdBlock()
+                self?.webView.reload()
+            }
+        }
+    }
+
+    private var adBlockRules: WKContentRuleList?
+
+    /// Compile once, then attach/detach the rule list on every tab.
+    private func applyAdBlock() async {
+        if adBlockEnabled && adBlockRules == nil {
+            adBlockRules = await AdBlocker.compiledRuleList()
+        }
+        for tab in tabs {
+            let controller = tab.webView.configuration.userContentController
+            controller.removeAllContentRuleLists()
+            if adBlockEnabled, let rules = adBlockRules {
+                controller.add(rules)
+            }
+        }
+    }
+
+    /// Attach the rules to a newly created web view.
+    fileprivate func attachAdBlock(to webView: WKWebView) {
+        guard adBlockEnabled else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            if self.adBlockRules == nil {
+                self.adBlockRules = await AdBlocker.compiledRuleList()
+            }
+            if self.adBlockEnabled, let rules = self.adBlockRules {
+                webView.configuration.userContentController.add(rules)
+            }
+        }
+    }
+
     /// What to do when a site asks for camera/microphone access.
     enum CapturePolicy: Int, CaseIterable {
         case ask, allow, deny
@@ -443,6 +484,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         blockPopups = defaults.object(forKey: "blockPopups") as? Bool ?? false
         javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool ?? true
         capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
+        adBlockEnabled = defaults.object(forKey: "adBlockEnabled") as? Bool ?? true
         webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
         keepAliveInBackground = defaults.bool(forKey: "keepAliveInBackground")
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool
@@ -630,6 +672,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         webView.backgroundColor = .black
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        attachAdBlock(to: webView)
         return webView
     }
 
@@ -1143,6 +1186,7 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
         webView.backgroundColor = .black
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        attachAdBlock(to: webView)
 
         let tab = Tab(webView: webView)
         tabs.append(tab)
