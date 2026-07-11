@@ -68,6 +68,36 @@ final class BrowserViewModel: NSObject, ObservableObject {
         var url: String
     }
 
+    struct HistoryEntry: Codable, Identifiable {
+        var id = UUID()
+        var title: String
+        var url: String
+        var date: Date
+    }
+
+    @Published var history: [HistoryEntry] {
+        didSet {
+            if let data = try? JSONEncoder().encode(history) {
+                UserDefaults.standard.set(data, forKey: "history")
+            }
+        }
+    }
+
+    @Published var showScrollButtons: Bool {
+        didSet { UserDefaults.standard.set(showScrollButtons, forKey: "showScrollButtons") }
+    }
+
+    /// Desktop (PC) or mobile presentation: user agent + content mode.
+    @Published var desktopMode: Bool {
+        didSet {
+            UserDefaults.standard.set(desktopMode, forKey: "desktopMode")
+            for tab in tabs {
+                tab.webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
+            }
+            webView.reload()
+        }
+    }
+
     var webViewSize: CGSize = .zero {
         didSet {
             // Keep the cursor on screen after rotation / layout changes.
@@ -94,6 +124,14 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let defaults = UserDefaults.standard
         let savedSensitivity = defaults.double(forKey: "cursorSensitivity")
         cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
+        showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool ?? true
+        desktopMode = defaults.object(forKey: "desktopMode") as? Bool ?? true
+        if let data = defaults.data(forKey: "history"),
+           let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
+            history = saved
+        } else {
+            history = []
+        }
         if let data = defaults.data(forKey: "bookmarks"),
            let saved = try? JSONDecoder().decode([Bookmark].self, from: data) {
             bookmarks = saved
@@ -220,7 +258,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         config.userContentController.add(ScriptMessageProxy(self), name: "gbEvents")
 
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.customUserAgent = Self.desktopUserAgent
+        webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
         webView.allowsBackForwardNavigationGestures = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = false
@@ -358,6 +396,42 @@ final class BrowserViewModel: NSObject, ObservableObject {
     var isCurrentPageBookmarked: Bool {
         guard let url = currentURL?.absoluteString else { return false }
         return bookmarks.contains { $0.url == url }
+    }
+
+    // MARK: - History
+
+    fileprivate func recordHistory(url: URL, title: String) {
+        let urlString = url.absoluteString
+        if history.last?.url == urlString { return }
+        history.append(HistoryEntry(
+            title: title.isEmpty ? (url.host ?? urlString) : title,
+            url: urlString, date: Date()
+        ))
+        if history.count > 300 { history.removeFirst(history.count - 300) }
+    }
+
+    func clearHistory() { history = [] }
+
+    /// Wipe cookies, cache and all site data.
+    func clearBrowsingData() {
+        WKWebsiteDataStore.default().removeData(
+            ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+            modifiedSince: .distantPast
+        ) {}
+    }
+
+    // MARK: - Find in page
+
+    func findInPage(_ query: String, forward: Bool = true) {
+        guard !query.isEmpty else { return }
+        let escaped = query
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+        js("window.find('\(escaped)', false, \(forward ? "false" : "true"), true, false, true, false)")
+    }
+
+    func clearFindSelection() {
+        js("window.getSelection && window.getSelection().removeAllRanges()")
     }
 
     func toggleBookmark() {
@@ -515,8 +589,19 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
 
     nonisolated func webView(_ webView: WKWebView,
                              decidePolicyFor navigationAction: WKNavigationAction,
-                             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        decisionHandler(.allow)
+                             preferences: WKWebpagePreferences,
+                             decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        Task { @MainActor [weak self] in
+            preferences.preferredContentMode = (self?.desktopMode ?? true) ? .desktop : .mobile
+            decisionHandler(.allow, preferences)
+        }
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        Task { @MainActor [weak self] in
+            guard let url = webView.url else { return }
+            self?.recordHistory(url: url, title: webView.title ?? "")
+        }
     }
 }
 

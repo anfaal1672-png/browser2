@@ -6,12 +6,17 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var showBookmarks = false
     @State private var showTabs = false
+    @State private var showHistory = false
+    @State private var showFindBar = false
+    @State private var findQuery = ""
+    @FocusState private var findFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             if !viewModel.immersive {
                 toolbar
                 progressBar
+                if showFindBar { findBar }
             }
 
             GeometryReader { geo in
@@ -29,7 +34,7 @@ struct ContentView: View {
                     }
                 }
                 .overlay(alignment: .trailing) {
-                    if viewModel.cursorMode { scrollStrip }
+                    if viewModel.cursorMode && viewModel.showScrollButtons { scrollStrip }
                 }
                 .onAppear { viewModel.webViewSize = geo.size }
                 .onChange(of: geo.size) { _, newSize in viewModel.webViewSize = newSize }
@@ -55,6 +60,7 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) { settingsSheet }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
         .sheet(isPresented: $showTabs) { tabsSheet }
+        .sheet(isPresented: $showHistory) { historySheet }
     }
 
     /// Small floating controls shown in immersive mode.
@@ -162,8 +168,48 @@ struct ContentView: View {
                 }
             }
 
-            Button { showSettings = true } label: {
-                Image(systemName: "gearshape")
+            Menu {
+                if let url = viewModel.currentURL {
+                    ShareLink(item: url) {
+                        Label("共有", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        UIPasteboard.general.string = url.absoluteString
+                    } label: {
+                        Label("リンクをコピー", systemImage: "doc.on.doc")
+                    }
+                }
+                Button {
+                    showFindBar = true
+                    findFieldFocused = true
+                } label: {
+                    Label("ページ内検索", systemImage: "magnifyingglass")
+                }
+                Button { showHistory = true } label: {
+                    Label("履歴", systemImage: "clock")
+                }
+                Divider()
+                Button {
+                    viewModel.desktopMode.toggle()
+                } label: {
+                    Label(viewModel.desktopMode ? "モバイル版サイトを表示" : "PC版サイトを表示",
+                          systemImage: viewModel.desktopMode ? "iphone" : "desktopcomputer")
+                }
+                Button {
+                    viewModel.showScrollButtons.toggle()
+                } label: {
+                    Label(viewModel.showScrollButtons ? "スクロールボタンを隠す" : "スクロールボタンを表示",
+                          systemImage: "chevron.up.chevron.down")
+                }
+                Button { viewModel.goHome() } label: {
+                    Label("ホーム", systemImage: "house")
+                }
+                Divider()
+                Button { showSettings = true } label: {
+                    Label("設定", systemImage: "gearshape")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
         }
         .font(.system(size: 16, weight: .medium))
@@ -171,6 +217,89 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.ultraThinMaterial)
+    }
+
+    // MARK: - Find in page
+
+    private var findBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            TextField("ページ内を検索", text: $findQuery)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+                .focused($findFieldFocused)
+                .onSubmit { viewModel.findInPage(findQuery) }
+                .font(.system(size: 14))
+            Button { viewModel.findInPage(findQuery, forward: false) } label: {
+                Image(systemName: "chevron.up")
+            }
+            Button { viewModel.findInPage(findQuery) } label: {
+                Image(systemName: "chevron.down")
+            }
+            Button("完了") {
+                showFindBar = false
+                findQuery = ""
+                viewModel.clearFindSelection()
+            }
+            .font(.system(size: 13, weight: .medium))
+        }
+        .font(.system(size: 14, weight: .medium))
+        .tint(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial)
+    }
+
+    // MARK: - History
+
+    private var historySheet: some View {
+        NavigationStack {
+            List {
+                ForEach(viewModel.history.reversed()) { entry in
+                    Button {
+                        if let url = URL(string: entry.url) {
+                            viewModel.webView.load(URLRequest(url: url))
+                        }
+                        showHistory = false
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.title)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            HStack {
+                                Text(entry.url)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(entry.date, style: .relative)
+                            }
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if viewModel.history.isEmpty {
+                    Text("履歴はまだありません")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 14))
+                }
+            }
+            .navigationTitle("履歴")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("消去", role: .destructive) { viewModel.clearHistory() }
+                        .disabled(viewModel.history.isEmpty)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { showHistory = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private var progressBar: some View {
@@ -383,10 +512,19 @@ struct ContentView: View {
                         Slider(value: $viewModel.cursorSensitivity, in: 0.5...3.0, step: 0.1)
                     }
                 }
+                Section("表示") {
+                    Toggle("PC版サイトを表示", isOn: $viewModel.desktopMode)
+                    Toggle("スクロールボタンを表示", isOn: $viewModel.showScrollButtons)
+                }
                 Section("ナビゲーション") {
                     Button("ホームに戻る") {
                         viewModel.goHome()
                         showSettings = false
+                    }
+                }
+                Section("プライバシー") {
+                    Button("閲覧データを消去(Cookie・キャッシュ)", role: .destructive) {
+                        viewModel.clearBrowsingData()
                     }
                 }
                 Section("操作方法") {
