@@ -36,7 +36,18 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
-    @Published var inputMode: InputMode = .trackpad
+    @Published var inputMode: InputMode = .trackpad {
+        didSet { applyKeyboardSuppression() }
+    }
+
+    /// In cursor mode, page focus must not open the iOS keyboard.
+    func applyKeyboardSuppression() {
+        guard !tabs.isEmpty else { return }
+        webView.evaluateJavaScript(
+            "window.__gb && __gb.setSuppressKeyboard(\(cursorMode))",
+            completionHandler: nil
+        )
+    }
 
     /// Trackpad behavior scheme.
     enum ControlScheme: Int, CaseIterable {
@@ -405,6 +416,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         pointerLocked = false
         pageHidesCursor = false
         dragLocked = false
+        applyKeyboardSuppression()
 
         // Silence background tabs (also suspends Web Audio); resume the active one.
         for (i, tab) in tabs.enumerated() {
@@ -693,9 +705,6 @@ final class BrowserViewModel: NSObject, ObservableObject {
         keyUp(key)
     }
 
-    /// Shows the native-IME text input bar (for Japanese and other languages).
-    @Published var showTextInput: Bool = false
-
     // MARK: - Built-in romaji IME
 
     /// While true, virtual keyboard letters feed the romaji buffer instead of
@@ -856,6 +865,7 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
 
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor [weak self] in
+            self?.applyKeyboardSuppression()
             guard let url = webView.url else { return }
             self?.recordHistory(url: url, title: webView.title ?? "")
         }

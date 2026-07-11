@@ -152,15 +152,6 @@ struct VirtualKeyboardView: View {
 
             Button {
                 viewModel.imeActive = false
-                viewModel.showTextInput = true   // switch to the OS keyboard
-            } label: {
-                Image(systemName: "keyboard.badge.ellipsis")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
-            }
-
-            Button {
-                viewModel.imeActive = false
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 16))

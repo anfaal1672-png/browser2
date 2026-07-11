@@ -19,6 +19,7 @@ enum InputBridge {
             captured: null,   // element holding pointer capture for our pointerId
             dnd: null,        // in-progress emulated HTML5 drag-and-drop
             cursorHidden: false,   // page is showing its own cursor (cursor: none)
+            suppressKeyboard: false,   // cursor mode: don't pop the OS keyboard on focus
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
@@ -235,6 +236,12 @@ enum InputBridge {
                     const tag = (target.tagName || '').toLowerCase();
                     if (tag === 'input' || tag === 'textarea' || tag === 'select' ||
                         target.isContentEditable || tag === 'canvas' || tag === 'button' || tag === 'a') {
+                        // In cursor mode, focus fields without popping the OS keyboard.
+                        if (state.suppressKeyboard &&
+                            (tag === 'input' || tag === 'textarea' || target.isContentEditable)) {
+                            target.setAttribute('inputmode', 'none');
+                            target.setAttribute('data-gb-imode', '1');
+                        }
                         target.focus({ preventScroll: true });
                     }
                 }
@@ -383,6 +390,24 @@ enum InputBridge {
                 } else if (el && el.isContentEditable) {
                     document.execCommand('insertText', false, text);
                 }
+            },
+
+            // Cursor mode on/off: whether programmatic focus may open the OS
+            // keyboard. Propagates into child frames.
+            setSuppressKeyboard: function (on) {
+                state.suppressKeyboard = !!on;
+                if (!on) {
+                    document.querySelectorAll('[data-gb-imode]').forEach(function (el) {
+                        el.removeAttribute('inputmode');
+                        el.removeAttribute('data-gb-imode');
+                    });
+                }
+                document.querySelectorAll('iframe,frame').forEach(function (f) {
+                    try {
+                        f.contentWindow.postMessage(
+                            { __gbCall: 'setSuppressKeyboard', args: [!!on] }, '*');
+                    } catch (e) {}
+                });
             },
 
             isPointerLocked: function () {
