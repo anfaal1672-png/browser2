@@ -54,6 +54,10 @@ struct ContentView: View {
             }
             .clipped()
 
+            if viewModel.showTextInput {
+                textInputBar
+            }
+
             if viewModel.keyboardVisible {
                 VirtualKeyboardView(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -257,6 +261,45 @@ struct ContentView: View {
         .background(Color.white.opacity(urlFieldFocused ? 0.16 : 0.10),
                     in: RoundedRectangle(cornerRadius: 10))
         .animation(.easeInOut(duration: 0.15), value: urlFieldFocused)
+    }
+
+    // MARK: - Native-IME text input (Japanese etc.)
+
+    @State private var imeText = ""
+    @FocusState private var imeFieldFocused: Bool
+
+    /// Input bar backed by the native iOS keyboard, so Japanese romaji→kanji
+    /// conversion works. Committed text is inserted into the page's focused field.
+    private var textInputBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "character.textbox.ja")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+            TextField("日本語入力(確定で送信)", text: $imeText)
+                .focused($imeFieldFocused)
+                .submitLabel(.send)
+                .onSubmit {
+                    viewModel.insertText(imeText)
+                    imeText = ""
+                    imeFieldFocused = true   // keep typing
+                }
+                .font(.system(size: 14))
+            Button("送信") {
+                viewModel.insertText(imeText)
+                imeText = ""
+            }
+            .disabled(imeText.isEmpty)
+            Button("閉じる") {
+                imeText = ""
+                viewModel.showTextInput = false
+            }
+        }
+        .font(.system(size: 13, weight: .medium))
+        .tint(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial)
+        .onAppear { imeFieldFocused = true }
     }
 
     // MARK: - Find in page

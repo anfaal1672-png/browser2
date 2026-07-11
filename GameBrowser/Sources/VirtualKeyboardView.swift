@@ -68,8 +68,9 @@ struct VirtualKeyboardView: View {
                 }
                 HStack(spacing: 5) {
                     KeyButton(key: InputBridge.escape, viewModel: viewModel, width: 62)
-                    KeyButton(key: InputBridge.space, viewModel: viewModel, width: 128)
+                    KeyButton(key: InputBridge.space, viewModel: viewModel, width: 84)
                     KeyButton(key: InputBridge.enter, viewModel: viewModel, width: 52)
+                    imeKey
                 }
             }
 
@@ -105,8 +106,30 @@ struct VirtualKeyboardView: View {
                 KeyButton(key: InputBridge.ctrl, viewModel: viewModel, sticky: true, width: 54)
                 KeyButton(key: InputBridge.tab, viewModel: viewModel, width: 44)
                 KeyButton(key: InputBridge.space, viewModel: viewModel, flexible: true)
+                imeKey
                 KeyButton(key: InputBridge.enter, viewModel: viewModel, width: 58)
             }
+        }
+    }
+
+    /// Opens the native-IME input bar for Japanese text entry.
+    private var imeKey: some View {
+        Button {
+            viewModel.hapticLight()
+            viewModel.showTextInput = true
+        } label: {
+            Text("あ")
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(viewModel.showTextInput ? Color.black : Color.cyan)
+                .frame(width: 40, height: 40)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(viewModel.showTextInput ? Color.cyan : Color.white.opacity(0.14))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.cyan.opacity(0.5), lineWidth: 0.5)
+                )
         }
     }
 

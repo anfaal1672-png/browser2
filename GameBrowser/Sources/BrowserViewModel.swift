@@ -693,6 +693,19 @@ final class BrowserViewModel: NSObject, ObservableObject {
         keyUp(key)
     }
 
+    /// Shows the native-IME text input bar (for Japanese and other languages).
+    @Published var showTextInput: Bool = false
+
+    /// Insert committed text into the page's focused editable element.
+    func insertText(_ text: String) {
+        guard !text.isEmpty else { return }
+        let escaped = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        js("window.__gb && __gb.insertText('\(escaped)')")
+    }
+
     /// OS-style key auto-repeat: keydown with repeat=true while held.
     func repeatKey(_ key: InputBridge.Key) {
         sendKey(type: "keydown", key, repeating: true)

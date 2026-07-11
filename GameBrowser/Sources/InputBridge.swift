@@ -353,6 +353,38 @@ enum InputBridge {
                 }
             },
 
+            // Insert committed text (e.g. from the native Japanese IME) into
+            // the focused editable element, forwarding into iframes as needed.
+            insertText: function (text) {
+                let kf = state.keyFrame;
+                if (!(kf && kf.isConnected)) {
+                    const hovered = targetAt(state.x, state.y);
+                    kf = isFrame(hovered) ? hovered : null;
+                }
+                if (kf) {
+                    try {
+                        kf.contentWindow.postMessage(
+                            { __gbCall: 'insertText', args: [text] }, '*');
+                        return;
+                    } catch (e) {}
+                }
+                const el = document.activeElement;
+                if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                    const start = el.selectionStart, end = el.selectionEnd;
+                    if (start !== null) {
+                        el.setRangeText(text, start, end, 'end');
+                    } else {
+                        el.value += text;
+                    }
+                    el.dispatchEvent(new InputEvent('input', {
+                        bubbles: true, data: text, inputType: 'insertText',
+                    }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                } else if (el && el.isContentEditable) {
+                    document.execCommand('insertText', false, text);
+                }
+            },
+
             isPointerLocked: function () {
                 return !!document.pointerLockElement;
             },
