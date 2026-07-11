@@ -38,6 +38,23 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     @Published var inputMode: InputMode = .trackpad
 
+    /// Trackpad behavior scheme.
+    enum ControlScheme: Int, CaseIterable {
+        case classic   // long-press = drag, no momentum (original behavior)
+        case quick     // tap-and-a-half = drag, flick momentum, long-press = right click
+
+        var label: String {
+            switch self {
+            case .classic: return "従来"
+            case .quick: return "クイック"
+            }
+        }
+    }
+
+    @Published var controlScheme: ControlScheme {
+        didSet { UserDefaults.standard.set(controlScheme.rawValue, forKey: "controlScheme") }
+    }
+
     var cursorMode: Bool { inputMode != .touch }
     @Published var keyboardVisible: Bool = false {
         didSet { if !keyboardVisible { releaseAllKeys() } }
@@ -192,6 +209,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
         showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool ?? true
         joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
+        controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme")) ?? .classic
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool ?? true
         if let data = defaults.data(forKey: "history"),
            let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {

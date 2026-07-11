@@ -557,6 +557,24 @@ struct ContentView: View {
     private var settingsSheet: some View {
         NavigationStack {
             Form {
+                Section("操作方法") {
+                    Picker("スキーム", selection: $viewModel.controlScheme) {
+                        ForEach(BrowserViewModel.ControlScheme.allCases, id: \.self) {
+                            Text($0.label).tag($0)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    if viewModel.controlScheme == .quick {
+                        Label("タップ後すぐ押し込み: ドラッグ", systemImage: "hand.tap")
+                        Label("フリック: カーソルが滑る(慣性)", systemImage: "wind")
+                        Label("長押し: 右クリック", systemImage: "cursorarrow.rays")
+                    } else {
+                        Label("長押し→ドラッグ: ドラッグ&ドロップ", systemImage: "hand.point.up.left")
+                        Label("2本指タップ: 右クリック", systemImage: "cursorarrow.rays")
+                    }
+                }
+                .font(.system(size: 13))
+
                 Section("カーソル") {
                     VStack(alignment: .leading) {
                         Text("感度: \(String(format: "%.1f", viewModel.cursorSensitivity))x")
