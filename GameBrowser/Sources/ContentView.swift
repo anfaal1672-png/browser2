@@ -611,9 +611,28 @@ struct ContentView: View {
                         showSettings = false
                     }
                 }
+                Section("セキュリティ") {
+                    Toggle("詐欺Webサイトの警告", isOn: $viewModel.fraudWarning)
+                    Toggle("HTTPSを優先(http→https)", isOn: $viewModel.httpsOnly)
+                    Toggle("ポップアップをブロック", isOn: $viewModel.blockPopups)
+                    Toggle("JavaScriptを有効にする", isOn: $viewModel.javaScriptEnabled)
+                }
+                Section("サイトの権限") {
+                    Picker("カメラ・マイク", selection: $viewModel.capturePolicy) {
+                        ForEach(BrowserViewModel.CapturePolicy.allCases, id: \.self) {
+                            Text($0.label).tag($0)
+                        }
+                    }
+                    Button("位置情報の使用を許可する") {
+                        viewModel.requestLocationPermission()
+                    }
+                }
                 Section("プライバシー") {
                     Button("閲覧データを消去(Cookie・キャッシュ)", role: .destructive) {
                         viewModel.clearBrowsingData()
+                    }
+                    Button("履歴を消去", role: .destructive) {
+                        viewModel.clearHistory()
                     }
                 }
                 Section("操作方法") {

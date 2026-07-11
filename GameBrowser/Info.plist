@@ -46,6 +46,12 @@
 	</array>
 	<key>UIStatusBarHidden</key>
 	<false/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Webサイトが位置情報を要求した場合に使用します。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Webサイトがカメラへのアクセスを要求した場合に使用します。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Webサイトがマイクへのアクセスを要求した場合に使用します。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

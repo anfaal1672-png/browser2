@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import Combine
+import CoreLocation
 
 @MainActor
 final class BrowserViewModel: NSObject, ObservableObject {
@@ -101,6 +102,59 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     @Published var hapticsEnabled: Bool {
         didSet { UserDefaults.standard.set(hapticsEnabled, forKey: "hapticsEnabled") }
+    }
+
+    // MARK: - Security settings
+
+    /// Upgrade http:// navigations to https:// (HTTPS-first).
+    @Published var httpsOnly: Bool {
+        didSet { UserDefaults.standard.set(httpsOnly, forKey: "httpsOnly") }
+    }
+
+    /// Google Safe Browsing-backed fraudulent site warning.
+    @Published var fraudWarning: Bool {
+        didSet {
+            UserDefaults.standard.set(fraudWarning, forKey: "fraudWarning")
+            for tab in tabs {
+                tab.webView.configuration.preferences.isFraudulentWebsiteWarningEnabled = fraudWarning
+            }
+        }
+    }
+
+    /// Refuse window.open popups instead of opening them as tabs.
+    @Published var blockPopups: Bool {
+        didSet { UserDefaults.standard.set(blockPopups, forKey: "blockPopups") }
+    }
+
+    /// Master JavaScript switch (applied per navigation).
+    @Published var javaScriptEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(javaScriptEnabled, forKey: "javaScriptEnabled")
+            webView.reload()
+        }
+    }
+
+    /// What to do when a site asks for camera/microphone access.
+    enum CapturePolicy: Int, CaseIterable {
+        case ask, allow, deny
+        var label: String {
+            switch self {
+            case .ask: return "毎回確認"
+            case .allow: return "許可"
+            case .deny: return "拒否"
+            }
+        }
+    }
+
+    @Published var capturePolicy: CapturePolicy {
+        didSet { UserDefaults.standard.set(capturePolicy.rawValue, forKey: "capturePolicy") }
+    }
+
+    private let locationManager = CLLocationManager()
+
+    /// Trigger the system location permission prompt (used by page geolocation).
+    func requestLocationPermission() {
+        locationManager.requestWhenInUseAuthorization()
     }
 
     // Centralized haptics so the toggle applies everywhere.
@@ -255,6 +309,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
         joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
         hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool ?? true
         controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme")) ?? .classic
+        httpsOnly = defaults.object(forKey: "httpsOnly") as? Bool ?? false
+        fraudWarning = defaults.object(forKey: "fraudWarning") as? Bool ?? true
+        blockPopups = defaults.object(forKey: "blockPopups") as? Bool ?? false
+        javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool ?? true
+        capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool ?? true
         if let data = defaults.data(forKey: "history"),
            let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
@@ -322,35 +381,56 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Per-tab persisted state (URL, scroll position, ...).
+    private struct TabRecord: Codable {
+        var url: String
+        var scrollX: Double = 0
+        var scrollY: Double = 0
+    }
+
     private func saveTabs() {
-        let urls = tabs.map { tab -> String in
+        let records = tabs.map { tab -> TabRecord in
             let url = tab.webView.url
             // loadHTMLString reports about:blank — persist the start-page marker.
+            let urlString: String
             if url == nil || url?.scheme == "about" {
-                return tab.pendingURL?.absoluteString ?? Self.startPageMarker
+                urlString = tab.pendingURL?.absoluteString ?? Self.startPageMarker
+            } else {
+                urlString = url!.absoluteString
             }
-            return url!.absoluteString
+            let offset = tab.webView.scrollView.contentOffset
+            return TabRecord(url: urlString, scrollX: offset.x, scrollY: max(offset.y, 0))
         }
         let defaults = UserDefaults.standard
-        defaults.set(urls, forKey: "savedTabs")
+        if let data = try? JSONEncoder().encode(records) {
+            defaults.set(data, forKey: "savedTabRecords")
+        }
         defaults.set(activeTabIndex, forKey: "savedActiveTabIndex")
         saveSnapshots()
     }
 
     private func restoreTabs() {
         let defaults = UserDefaults.standard
-        let urls = (defaults.stringArray(forKey: "savedTabs") ?? [])
-            .compactMap { URL(string: $0) }
-        guard !urls.isEmpty else {
+        var records: [TabRecord] = []
+        if let data = defaults.data(forKey: "savedTabRecords"),
+           let decoded = try? JSONDecoder().decode([TabRecord].self, from: data) {
+            records = decoded
+        } else if let legacy = defaults.stringArray(forKey: "savedTabs") {
+            records = legacy.map { TabRecord(url: $0) }   // pre-scroll format
+        }
+        let valid = records.filter { URL(string: $0.url) != nil }
+        guard !valid.isEmpty else {
             newTab()
             return
         }
-        for (i, url) in urls.enumerated() {
+        for (i, record) in valid.enumerated() {
+            let url = URL(string: record.url)!
             let tab = Tab(webView: makeWebView())
             tab.pendingURL = url
+            tab.pendingScroll = CGPoint(x: record.scrollX, y: record.scrollY)
             tab.snapshot = UIImage(contentsOfFile: snapshotFile(i).path)
             tabs.append(tab)
-            if url.absoluteString == Self.startPageMarker {
+            if record.url == Self.startPageMarker {
                 loadStartPage(in: tab.webView)
             } else {
                 tab.webView.load(URLRequest(url: url))
@@ -368,6 +448,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         @Published var snapshot: UIImage?
         /// Last requested URL; used for persistence while the page is still loading.
         var pendingURL: URL?
+        /// Scroll position to restore once the page finishes loading.
+        var pendingScroll: CGPoint?
         init(webView: WKWebView) { self.webView = webView }
 
         @MainActor var title: String {
@@ -387,6 +469,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        config.preferences.isFraudulentWebsiteWarningEnabled = fraudWarning
+        config.upgradeKnownHostsToHTTPS = httpsOnly
         config.defaultWebpagePreferences.preferredContentMode = .desktop
 
         let userScript = WKUserScript(
@@ -875,9 +959,12 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
                              createWebViewWith configuration: WKWebViewConfiguration,
                              for navigationAction: WKNavigationAction,
                              windowFeatures: WKWindowFeatures) -> WKWebView? {
-        // Open popups in a new tab.
+        // Open popups in a new tab (unless the popup blocker is on).
         if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
-            Task { @MainActor [weak self] in self?.newTab(url: url) }
+            Task { @MainActor [weak self] in
+                guard let self, !self.blockPopups else { return }
+                self.newTab(url: url)
+            }
         }
         return nil
     }
@@ -887,16 +974,64 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
                              preferences: WKWebpagePreferences,
                              decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
         Task { @MainActor [weak self] in
-            preferences.preferredContentMode = (self?.desktopMode ?? true) ? .desktop : .mobile
+            guard let self else {
+                decisionHandler(.allow, preferences)
+                return
+            }
+            preferences.preferredContentMode = self.desktopMode ? .desktop : .mobile
+            preferences.allowsContentJavaScript = self.javaScriptEnabled
+
+            // HTTPS-first: rewrite plain-http main-frame navigations.
+            if self.httpsOnly,
+               navigationAction.targetFrame?.isMainFrame == true,
+               let url = navigationAction.request.url,
+               url.scheme == "http",
+               var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                components.scheme = "https"
+                if let httpsURL = components.url {
+                    decisionHandler(.cancel, preferences)
+                    webView.load(URLRequest(url: httpsURL))
+                    return
+                }
+            }
             decisionHandler(.allow, preferences)
+        }
+    }
+
+    /// Camera / microphone access requested by a page (getUserMedia).
+    nonisolated func webView(_ webView: WKWebView,
+                             requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                             initiatedByFrame frame: WKFrameInfo,
+                             type: WKMediaCaptureType,
+                             decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        Task { @MainActor [weak self] in
+            switch self?.capturePolicy ?? .ask {
+            case .ask: decisionHandler(.prompt)
+            case .allow: decisionHandler(.grant)
+            case .deny: decisionHandler(.deny)
+            }
         }
     }
 
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor [weak self] in
-            self?.applyKeyboardSuppression()
+            guard let self else { return }
+            self.applyKeyboardSuppression()
+
+            // Restore the saved scroll position after a relaunch.
+            if let tab = self.tabs.first(where: { $0.webView === webView }),
+               let scroll = tab.pendingScroll {
+                tab.pendingScroll = nil
+                if scroll != .zero {
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(600))
+                        webView.scrollView.setContentOffset(scroll, animated: false)
+                    }
+                }
+            }
+
             guard let url = webView.url else { return }
-            self?.recordHistory(url: url, title: webView.title ?? "")
+            self.recordHistory(url: url, title: webView.title ?? "")
         }
     }
 }
