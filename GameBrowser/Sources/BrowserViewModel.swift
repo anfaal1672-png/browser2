@@ -386,14 +386,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     func newTab(url: URL? = nil) {
         let tab = Tab(webView: makeWebView())
-        tab.pendingURL = url ?? URL(string: Self.startPageMarker)
+        tab.pendingURL = url ?? Self.homeURL
         tabs.append(tab)
         selectTab(tabs.count - 1)
-        if let url {
-            tab.webView.load(URLRequest(url: url))
-        } else {
-            loadStartPage(in: tab.webView)
-        }
+        tab.webView.load(URLRequest(url: url ?? Self.homeURL))
         saveTabs()
     }
 
@@ -515,7 +511,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }
-    func goHome() { loadStartPage() }
+    func goHome() { webView.load(URLRequest(url: Self.homeURL)) }
 
     func open(_ bookmark: Bookmark) {
         if let url = URL(string: bookmark.url) { webView.load(URLRequest(url: url)) }
