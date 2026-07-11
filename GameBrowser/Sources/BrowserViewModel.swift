@@ -1057,7 +1057,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         if type == "pointerlock" {
             pointerLocked = (dict["locked"] as? Bool) ?? false
         } else if type == "cursorstyle" {
-            pageHidesCursor = (dict["hidden"] as? Bool) ?? false
+            let hidden = (dict["hidden"] as? Bool) ?? false
+            if pageHidesCursor != hidden { pageHidesCursor = hidden }
         } else if type == "notification" {
             postWebNotification(
                 title: dict["title"] as? String ?? "",

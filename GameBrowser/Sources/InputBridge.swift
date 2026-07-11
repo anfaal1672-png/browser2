@@ -18,7 +18,6 @@ enum InputBridge {
             raw: false,       // true while handling a call forwarded from a parent frame
             captured: null,   // element holding pointer capture for our pointerId
             dnd: null,        // in-progress emulated HTML5 drag-and-drop
-            cursorHidden: false,   // page is showing its own cursor (cursor: none)
             suppressKeyboard: false,   // cursor mode: don't pop the OS keyboard on focus
             compLen: 0,   // length of the in-field IME composition being edited
         };
@@ -208,14 +207,14 @@ enum InputBridge {
 
                 // Games that draw their own cursor set `cursor: none` — tell
                 // native code so the overlay arrow disappears over them.
+                // Posted on every move (native side dedupes): per-frame
+                // change-detection swallowed transitions when the cursor
+                // crossed an iframe boundary, trapping it visually inside.
                 try {
-                    const style = getComputedStyle(target).cursor;
-                    const hidden = style === 'none';
-                    if (hidden !== state.cursorHidden) {
-                        state.cursorHidden = hidden;
-                        window.webkit.messageHandlers.gbEvents.postMessage(
-                            { type: 'cursorstyle', hidden: hidden });
-                    }
+                    window.webkit.messageHandlers.gbEvents.postMessage({
+                        type: 'cursorstyle',
+                        hidden: getComputedStyle(target).cursor === 'none',
+                    });
                 } catch (e) {}
             },
 
