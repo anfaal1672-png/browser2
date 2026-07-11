@@ -63,6 +63,13 @@ struct ContentView: View {
             }
             .clipped()
 
+            if viewModel.pendingCredential != nil {
+                credentialSavePrompt
+            }
+            if !viewModel.autofillSuggestions.isEmpty || viewModel.cardSuggestionVisible {
+                autofillBar
+            }
+
             if viewModel.keyboardVisible {
                 VirtualKeyboardView(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -319,6 +326,71 @@ struct ContentView: View {
         .background(Color.white.opacity(urlFieldFocused ? 0.16 : 0.10),
                     in: RoundedRectangle(cornerRadius: 10))
         .animation(.easeInOut(duration: 0.15), value: urlFieldFocused)
+    }
+
+    // MARK: - Autofill UI
+
+    private var credentialSavePrompt: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(.cyan)
+            Text("パスワードを保存しますか?")
+                .font(.system(size: 13, weight: .medium))
+            Spacer()
+            Button("保存") { viewModel.savePendingCredential() }
+                .font(.system(size: 13, weight: .semibold))
+            Button("しない") { viewModel.pendingCredential = nil }
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .tint(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+    }
+
+    private var autofillBar: some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(viewModel.autofillSuggestions) { credential in
+                        Button {
+                            viewModel.fill(credential)
+                        } label: {
+                            Label(credential.username.isEmpty ? credential.domain : credential.username,
+                                  systemImage: "key.fill")
+                                .font(.system(size: 13, weight: .medium))
+                                .lineLimit(1)
+                                .padding(.horizontal, 10)
+                                .frame(height: 30)
+                                .background(Color.cyan.opacity(0.22), in: Capsule())
+                        }
+                    }
+                    if viewModel.cardSuggestionVisible {
+                        Button {
+                            viewModel.fillCard()
+                        } label: {
+                            Label(viewModel.paymentCard.maskedNumber, systemImage: "creditcard.fill")
+                                .font(.system(size: 13, weight: .medium))
+                                .padding(.horizontal, 10)
+                                .frame(height: 30)
+                                .background(Color.cyan.opacity(0.22), in: Capsule())
+                        }
+                    }
+                }
+            }
+            Button {
+                viewModel.dismissAutofill()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .tint(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial)
     }
 
     // MARK: - Find in page
@@ -714,8 +786,49 @@ struct ContentView: View {
                     }
                     .pickerStyle(.segmented)
                 }
+                Section("自動入力") {
+                    Toggle("パスワード・カードの自動入力", isOn: $viewModel.autofillEnabled)
+                    if !viewModel.credentials.isEmpty {
+                        ForEach(viewModel.credentials) { credential in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(credential.username.isEmpty ? "(ユーザー名なし)" : credential.username)
+                                    .font(.system(size: 14, weight: .medium))
+                                Text(credential.domain)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .onDelete { viewModel.credentials.remove(atOffsets: $0) }
+                    }
+                    NavigationLink("支払い方法(カード)") {
+                        Form {
+                            Section("カード情報(この端末のみに暗号化保存)") {
+                                TextField("カード番号", text: $viewModel.paymentCard.number)
+                                    .keyboardType(.numberPad)
+                                TextField("名義(ローマ字)", text: $viewModel.paymentCard.holder)
+                                HStack {
+                                    TextField("月(MM)", text: $viewModel.paymentCard.expMonth)
+                                        .keyboardType(.numberPad)
+                                    TextField("年(YY)", text: $viewModel.paymentCard.expYear)
+                                        .keyboardType(.numberPad)
+                                }
+                            }
+                            Button("カード情報を削除", role: .destructive) {
+                                viewModel.paymentCard = PaymentCard()
+                            }
+                            .disabled(viewModel.paymentCard.isEmpty)
+                        }
+                        .navigationTitle("支払い方法")
+                    }
+                }
                 Section("セキュリティ") {
                     Toggle("広告ブロック", isOn: $viewModel.adBlockEnabled)
+                    if viewModel.adBlockEnabled {
+                        Toggle("強力な広告ブロック(EasyList)", isOn: $viewModel.useFullAdList)
+                        Text("数万件のルールをダウンロードして使用します(週1回更新)。初回は反映まで数秒かかります。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
                     Picker("トラッキング防止", selection: $viewModel.trackingLevel) {
                         ForEach(TrackerBlocker.Level.allCases, id: \.self) {
                             Text($0.label).tag($0)

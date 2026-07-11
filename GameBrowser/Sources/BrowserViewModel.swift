@@ -208,13 +208,30 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Full EasyList mode: downloaded and compiled, ~10,000s of rules.
+    @Published var useFullAdList: Bool {
+        didSet {
+            UserDefaults.standard.set(useFullAdList, forKey: "useFullAdList")
+            adBlockRules = nil
+            Task { [weak self] in
+                await self?.applyAdBlock()
+                self?.webView.reload()
+            }
+        }
+    }
+
     private var adBlockRules: WKContentRuleList?
     private var trackingRules: WKContentRuleList?
 
     /// Compile once, then attach/detach the rule lists on every tab.
     private func applyAdBlock() async {
         if adBlockEnabled && adBlockRules == nil {
-            adBlockRules = await AdBlocker.compiledRuleList()
+            if useFullAdList, let full = await AdBlocker.fullRuleList() {
+                adBlockRules = full
+            } else {
+                // Builtin list; also the fallback when the download fails.
+                adBlockRules = await AdBlocker.compiledRuleList()
+            }
         }
         if trackingLevel != .off && trackingRules == nil {
             trackingRules = await TrackerBlocker.compiledRuleList(for: trackingLevel)
@@ -238,7 +255,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
             guard let self else { return }
             if self.adBlockEnabled {
                 if self.adBlockRules == nil {
-                    self.adBlockRules = await AdBlocker.compiledRuleList()
+                    if self.useFullAdList, let full = await AdBlocker.fullRuleList() {
+                        self.adBlockRules = full
+                    } else {
+                        self.adBlockRules = await AdBlocker.compiledRuleList()
+                    }
                 }
                 if let rules = self.adBlockRules {
                     webView.configuration.userContentController.add(rules)
@@ -302,6 +323,84 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// Require Face ID / passcode when the app returns to the foreground.
     @Published var appLockEnabled: Bool {
         didSet { UserDefaults.standard.set(appLockEnabled, forKey: "appLockEnabled") }
+    }
+
+    // MARK: - Autofill (passwords & payment card)
+
+    @Published var autofillEnabled: Bool {
+        didSet { UserDefaults.standard.set(autofillEnabled, forKey: "autofillEnabled") }
+    }
+
+    @Published var credentials: [Credential] = [] {
+        didSet { AutofillStore.saveCredentials(credentials) }
+    }
+    @Published var paymentCard: PaymentCard = PaymentCard() {
+        didSet { AutofillStore.saveCard(paymentCard) }
+    }
+
+    /// Credential waiting for the user's "save?" decision.
+    @Published var pendingCredential: Credential?
+    /// Suggestions for the focused field ("password" or "card").
+    @Published var autofillSuggestions: [Credential] = []
+    @Published var cardSuggestionVisible = false
+
+    private var currentHost: String { currentURL?.host ?? "" }
+
+    fileprivate func handleAutofillFocus(kind: String) {
+        guard autofillEnabled else { return }
+        if kind == "password" {
+            autofillSuggestions = AutofillStore.credentials(for: currentHost, in: credentials)
+            cardSuggestionVisible = false
+        } else if kind == "card" {
+            cardSuggestionVisible = !paymentCard.isEmpty
+            autofillSuggestions = []
+        }
+    }
+
+    fileprivate func handleCredentialSubmitted(username: String, password: String) {
+        guard autofillEnabled, !password.isEmpty, !currentHost.isEmpty else { return }
+        // Already saved identically? Nothing to do.
+        if credentials.contains(where: {
+            $0.domain == currentHost && $0.username == username && $0.password == password
+        }) { return }
+        pendingCredential = Credential(domain: currentHost, username: username, password: password)
+    }
+
+    func savePendingCredential() {
+        guard let pending = pendingCredential else { return }
+        // Update an existing entry for the same site/user, else append.
+        if let index = credentials.firstIndex(where: {
+            $0.domain == pending.domain && $0.username == pending.username
+        }) {
+            credentials[index].password = pending.password
+        } else {
+            credentials.append(pending)
+        }
+        pendingCredential = nil
+    }
+
+    func fill(_ credential: Credential) {
+        js("""
+        window.__gb && __gb.fillCredentials('\(jsEscape(credential.username))', \
+        '\(jsEscape(credential.password))')
+        """)
+        autofillSuggestions = []
+    }
+
+    func fillCard() {
+        guard !paymentCard.isEmpty else { return }
+        js("""
+        window.__gb && __gb.fillCard('\(jsEscape(paymentCard.number))', \
+        '\(jsEscape(paymentCard.holder))', '\(jsEscape(paymentCard.expMonth))', \
+        '\(jsEscape(paymentCard.expYear))')
+        """)
+        cardSuggestionVisible = false
+    }
+
+    func dismissAutofill() {
+        autofillSuggestions = []
+        cardSuggestionVisible = false
+        pendingCredential = nil
     }
 
     // MARK: - Granular browsing-data deletion
@@ -594,6 +693,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         searchEngine = SearchEngine(rawValue: defaults.integer(forKey: "searchEngine")) ?? .google
         newTabPage = NewTabPage(rawValue: defaults.integer(forKey: "newTabPage")) ?? .home
         appLockEnabled = defaults.bool(forKey: "appLockEnabled")
+        autofillEnabled = defaults.object(forKey: "autofillEnabled") as? Bool ?? true
+        useFullAdList = defaults.bool(forKey: "useFullAdList")
         webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
         keepAliveInBackground = defaults.bool(forKey: "keepAliveInBackground")
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool
@@ -621,6 +722,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         gamepad = GamepadController(viewModel: self)
         UNUserNotificationCenter.current().delegate = self
+        credentials = AutofillStore.loadCredentials()
+        paymentCard = AutofillStore.loadCard()
 
         // Playback session + the "audio" background mode keep pages alive in
         // the background while they are producing sound (game music, calls).
@@ -885,6 +988,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
                     self?.saveTabsDebounced()
                     self?.pageHidesCursor = false   // reset on navigation
                     self?.cursorStyle = "auto"
+                    self?.dismissAutofill()
                 }
             },
             webView.observe(\.title) { [weak self] wv, _ in
@@ -1256,6 +1360,13 @@ final class BrowserViewModel: NSObject, ObservableObject {
             )
         } else if type == "notificationPermission" {
             requestNotificationPermission()
+        } else if type == "autofillFocus" {
+            handleAutofillFocus(kind: dict["kind"] as? String ?? "")
+        } else if type == "credentialSubmitted" {
+            handleCredentialSubmitted(
+                username: dict["username"] as? String ?? "",
+                password: dict["password"] as? String ?? ""
+            )
         }
     }
 }

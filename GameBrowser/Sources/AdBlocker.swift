@@ -109,6 +109,45 @@ enum AdBlocker {
         )
         return compiled ?? nil   // flatten the double optional
     }
+
+    // MARK: - Full EasyList mode
+
+    /// EasyList converted to Safari content-blocker JSON, published by the
+    /// Adblock Plus project (tens of thousands of rules).
+    private static let fullListURL =
+        URL(string: "https://easylist-downloads.adblockplus.org/easylist_content_blocker.json")!
+    static let fullIdentifier = "gb-adblock-full"
+    private static let refreshInterval: TimeInterval = 7 * 24 * 3600
+
+    /// Full-strength rule list: reuses WebKit's compiled cache, refreshing the
+    /// download weekly. Returns nil on failure (caller falls back to builtin).
+    static func fullRuleList() async -> WKContentRuleList? {
+        let defaults = UserDefaults.standard
+        let lastFetch = defaults.double(forKey: "adblockFullFetchedAt")
+        let fresh = Date().timeIntervalSince1970 - lastFetch < refreshInterval
+
+        let store = WKContentRuleListStore.default()
+        if fresh,
+           let cached = try? await store?.contentRuleList(forIdentifier: fullIdentifier),
+           let cached {
+            return cached
+        }
+
+        guard let (data, response) = try? await URLSession.shared.data(from: fullListURL),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = String(data: data, encoding: .utf8), !json.isEmpty
+        else {
+            // Offline / gone: any previously compiled copy is still valid.
+            let stale = try? await store?.contentRuleList(forIdentifier: fullIdentifier)
+            return stale ?? nil
+        }
+
+        let compiled = await compile(identifier: fullIdentifier, json: json)
+        if compiled != nil {
+            defaults.set(Date().timeIntervalSince1970, forKey: "adblockFullFetchedAt")
+        }
+        return compiled
+    }
 }
 
 /// Tracker blocking with Edge-style protection levels.
