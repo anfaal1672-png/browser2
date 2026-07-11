@@ -120,25 +120,8 @@ struct VirtualKeyboardView: View {
     /// Composition + kanji candidate bar shown above the keys while the IME is on.
     private var imeBar: some View {
         HStack(spacing: 8) {
-            // Composition display: converted kana + pending romaji.
-            HStack(spacing: 0) {
-                Text(viewModel.imeKana)
-                    .foregroundStyle(.white)
-                Text(viewModel.imePending)
-                    .foregroundStyle(.secondary)
-                if viewModel.imeComposition.isEmpty {
-                    Text("ローマ字で入力…")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .font(.system(size: 15))
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .frame(minWidth: 110, alignment: .leading)
-            .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-
-            // Kanji candidates from the conversion API.
+            // Kanji candidates from the conversion API (composition itself is
+            // typed inline into the page's field).
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     if !viewModel.imeComposition.isEmpty {
