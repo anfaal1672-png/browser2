@@ -196,12 +196,28 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
-    private var adBlockRules: WKContentRuleList?
+    /// Edge-style tracking prevention level.
+    @Published var trackingLevel: TrackerBlocker.Level {
+        didSet {
+            UserDefaults.standard.set(trackingLevel.rawValue, forKey: "trackingLevel")
+            trackingRules = nil
+            Task { [weak self] in
+                await self?.applyAdBlock()
+                self?.webView.reload()
+            }
+        }
+    }
 
-    /// Compile once, then attach/detach the rule list on every tab.
+    private var adBlockRules: WKContentRuleList?
+    private var trackingRules: WKContentRuleList?
+
+    /// Compile once, then attach/detach the rule lists on every tab.
     private func applyAdBlock() async {
         if adBlockEnabled && adBlockRules == nil {
             adBlockRules = await AdBlocker.compiledRuleList()
+        }
+        if trackingLevel != .off && trackingRules == nil {
+            trackingRules = await TrackerBlocker.compiledRuleList(for: trackingLevel)
         }
         for tab in tabs {
             let controller = tab.webView.configuration.userContentController
@@ -209,21 +225,110 @@ final class BrowserViewModel: NSObject, ObservableObject {
             if adBlockEnabled, let rules = adBlockRules {
                 controller.add(rules)
             }
+            if trackingLevel != .off, let rules = trackingRules {
+                controller.add(rules)
+            }
         }
     }
 
     /// Attach the rules to a newly created web view.
     fileprivate func attachAdBlock(to webView: WKWebView) {
-        guard adBlockEnabled else { return }
+        guard adBlockEnabled || trackingLevel != .off else { return }
         Task { [weak self] in
             guard let self else { return }
-            if self.adBlockRules == nil {
-                self.adBlockRules = await AdBlocker.compiledRuleList()
+            if self.adBlockEnabled {
+                if self.adBlockRules == nil {
+                    self.adBlockRules = await AdBlocker.compiledRuleList()
+                }
+                if let rules = self.adBlockRules {
+                    webView.configuration.userContentController.add(rules)
+                }
             }
-            if self.adBlockEnabled, let rules = self.adBlockRules {
-                webView.configuration.userContentController.add(rules)
+            if self.trackingLevel != .off {
+                if self.trackingRules == nil {
+                    self.trackingRules = await TrackerBlocker.compiledRuleList(for: self.trackingLevel)
+                }
+                if let rules = self.trackingRules {
+                    webView.configuration.userContentController.add(rules)
+                }
             }
         }
+    }
+
+    // MARK: - Search engine / new tab page / app lock
+
+    enum SearchEngine: Int, CaseIterable {
+        case google, bing, duckduckgo, yahooJapan
+
+        var label: String {
+            switch self {
+            case .google: return "Google"
+            case .bing: return "Bing"
+            case .duckduckgo: return "DuckDuckGo"
+            case .yahooJapan: return "Yahoo! JAPAN"
+            }
+        }
+
+        func searchURL(for query: String) -> URL? {
+            let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+            switch self {
+            case .google: return URL(string: "https://www.google.com/search?q=\(q)")
+            case .bing: return URL(string: "https://www.bing.com/search?q=\(q)")
+            case .duckduckgo: return URL(string: "https://duckduckgo.com/?q=\(q)")
+            case .yahooJapan: return URL(string: "https://search.yahoo.co.jp/search?p=\(q)")
+            }
+        }
+    }
+
+    @Published var searchEngine: SearchEngine {
+        didSet { UserDefaults.standard.set(searchEngine.rawValue, forKey: "searchEngine") }
+    }
+
+    enum NewTabPage: Int, CaseIterable {
+        case home, startPage
+
+        var label: String {
+            switch self {
+            case .home: return "ホーム(Google)"
+            case .startPage: return "スタートページ"
+            }
+        }
+    }
+
+    @Published var newTabPage: NewTabPage {
+        didSet { UserDefaults.standard.set(newTabPage.rawValue, forKey: "newTabPage") }
+    }
+
+    /// Require Face ID / passcode when the app returns to the foreground.
+    @Published var appLockEnabled: Bool {
+        didSet { UserDefaults.standard.set(appLockEnabled, forKey: "appLockEnabled") }
+    }
+
+    // MARK: - Granular browsing-data deletion
+
+    func clearData(cookies: Bool, cache: Bool, history clearHistoryFlag: Bool) {
+        var types = Set<String>()
+        if cookies {
+            types.formUnion([
+                WKWebsiteDataTypeCookies,
+                WKWebsiteDataTypeLocalStorage,
+                WKWebsiteDataTypeSessionStorage,
+                WKWebsiteDataTypeIndexedDBDatabases,
+                WKWebsiteDataTypeWebSQLDatabases,
+            ])
+        }
+        if cache {
+            types.formUnion([
+                WKWebsiteDataTypeDiskCache,
+                WKWebsiteDataTypeMemoryCache,
+                WKWebsiteDataTypeOfflineWebApplicationCache,
+                WKWebsiteDataTypeFetchCache,
+            ])
+        }
+        if !types.isEmpty {
+            WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) {}
+        }
+        if clearHistoryFlag { clearHistory() }
     }
 
     /// What to do when a site asks for camera/microphone access.
@@ -485,6 +590,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool ?? true
         capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
         adBlockEnabled = defaults.object(forKey: "adBlockEnabled") as? Bool ?? true
+        trackingLevel = TrackerBlocker.Level(rawValue: defaults.integer(forKey: "trackingLevel")) ?? .balanced
+        searchEngine = SearchEngine(rawValue: defaults.integer(forKey: "searchEngine")) ?? .google
+        newTabPage = NewTabPage(rawValue: defaults.integer(forKey: "newTabPage")) ?? .home
+        appLockEnabled = defaults.bool(forKey: "appLockEnabled")
         webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
         keepAliveInBackground = defaults.bool(forKey: "keepAliveInBackground")
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool
@@ -678,10 +787,15 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     func newTab(url: URL? = nil) {
         let tab = Tab(webView: makeWebView())
-        tab.pendingURL = url ?? Self.homeURL
+        let useStartPage = url == nil && newTabPage == .startPage
+        tab.pendingURL = useStartPage ? URL(string: Self.startPageMarker) : (url ?? Self.homeURL)
         tabs.append(tab)
         selectTab(tabs.count - 1)
-        tab.webView.load(URLRequest(url: url ?? Self.homeURL))
+        if useStartPage {
+            loadStartPage(in: tab.webView)
+        } else {
+            tab.webView.load(URLRequest(url: url ?? Self.homeURL))
+        }
         saveTabs()
     }
 
@@ -799,8 +913,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         } else if text.contains(".") && !text.contains(" ") {
             url = URL(string: "https://\(text)")
         } else {
-            let q = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
-            url = URL(string: "https://www.google.com/search?q=\(q)")
+            url = searchEngine.searchURL(for: text)
         }
         if let url { webView.load(URLRequest(url: url)) }
     }

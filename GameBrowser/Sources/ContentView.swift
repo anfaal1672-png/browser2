@@ -1,9 +1,17 @@
 import SwiftUI
+import LocalAuthentication
 
 struct ContentView: View {
     @StateObject private var viewModel = BrowserViewModel()
     @FocusState private var urlFieldFocused: Bool
     @State private var showSettings = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isLocked = UserDefaults.standard.bool(forKey: "appLockEnabled")
+    @State private var unlocking = false
+    @AppStorage("appTheme") private var appTheme = 0   // 0 dark, 1 light, 2 system
+    @State private var clearCookies = true
+    @State private var clearCache = true
+    @State private var clearHistoryToo = false
     @State private var showBookmarks = false
     @State private var showTabs = false
     @State private var showHistory = false
@@ -69,10 +77,62 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.2), value: viewModel.fullKeyboard)
         .animation(.easeInOut(duration: 0.25), value: viewModel.immersive)
         .animation(.easeInOut(duration: 0.2), value: viewModel.pcMode)
+        .overlay {
+            if isLocked { lockScreen }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                if viewModel.appLockEnabled { isLocked = true }
+            case .active:
+                if isLocked { unlock() }
+            default:
+                break
+            }
+        }
+        .onAppear { if isLocked { unlock() } }
+        .preferredColorScheme(appTheme == 0 ? .dark : appTheme == 1 ? .light : nil)
         .sheet(isPresented: $showSettings) { settingsSheet }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
         .sheet(isPresented: $showTabs) { tabsSheet }
         .sheet(isPresented: $showHistory) { historySheet }
+    }
+
+    // MARK: - App lock (Face ID)
+
+    private var lockScreen: some View {
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 40))
+                Text("GameBrowserはロックされています")
+                    .font(.system(size: 15, weight: .medium))
+                Button("ロック解除") { unlock() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .foregroundStyle(.primary)
+        }
+    }
+
+    private func unlock() {
+        guard !unlocking else { return }
+        unlocking = true
+        let context = LAContext()
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            // No passcode set on the device — don't lock the user out.
+            isLocked = false
+            unlocking = false
+            return
+        }
+        context.evaluatePolicy(.deviceOwnerAuthentication,
+                               localizedReason: "GameBrowserのロックを解除") { success, _ in
+            Task { @MainActor in
+                if success { isLocked = false }
+                unlocking = false
+            }
+        }
     }
 
     /// Small floating controls shown in immersive mode.
@@ -634,8 +694,39 @@ struct ContentView: View {
                         showSettings = false
                     }
                 }
+                Section("検索と新しいタブ") {
+                    Picker("検索エンジン", selection: $viewModel.searchEngine) {
+                        ForEach(BrowserViewModel.SearchEngine.allCases, id: \.self) {
+                            Text($0.label).tag($0)
+                        }
+                    }
+                    Picker("新しいタブページ", selection: $viewModel.newTabPage) {
+                        ForEach(BrowserViewModel.NewTabPage.allCases, id: \.self) {
+                            Text($0.label).tag($0)
+                        }
+                    }
+                }
+                Section("外観") {
+                    Picker("テーマ", selection: $appTheme) {
+                        Text("ダーク").tag(0)
+                        Text("ライト").tag(1)
+                        Text("システム").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                }
                 Section("セキュリティ") {
                     Toggle("広告ブロック", isOn: $viewModel.adBlockEnabled)
+                    Picker("トラッキング防止", selection: $viewModel.trackingLevel) {
+                        ForEach(TrackerBlocker.Level.allCases, id: \.self) {
+                            Text($0.label).tag($0)
+                        }
+                    }
+                    if viewModel.trackingLevel == .strict {
+                        Text("厳重: 全トラッカーをブロックします。一部サイトが動かなくなる場合があります。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    Toggle("Face IDでアプリをロック", isOn: $viewModel.appLockEnabled)
                     Toggle("詐欺Webサイトの警告", isOn: $viewModel.fraudWarning)
                     Toggle("HTTPSを優先(http→https)", isOn: $viewModel.httpsOnly)
                     Toggle("ポップアップをブロック", isOn: $viewModel.blockPopups)
@@ -655,13 +746,18 @@ struct ContentView: View {
                         viewModel.requestNotificationPermission()
                     }
                 }
-                Section("プライバシー") {
-                    Button("閲覧データを消去(Cookie・キャッシュ)", role: .destructive) {
-                        viewModel.clearBrowsingData()
+                Section("閲覧データを削除") {
+                    Toggle("Cookie・サイトデータ", isOn: $clearCookies)
+                    Toggle("キャッシュ", isOn: $clearCache)
+                    Toggle("履歴", isOn: $clearHistoryToo)
+                    Button("選択したデータを削除", role: .destructive) {
+                        viewModel.clearData(
+                            cookies: clearCookies,
+                            cache: clearCache,
+                            history: clearHistoryToo
+                        )
                     }
-                    Button("履歴を消去", role: .destructive) {
-                        viewModel.clearHistory()
-                    }
+                    .disabled(!clearCookies && !clearCache && !clearHistoryToo)
                 }
                 Section("操作方法") {
                     Label("1本指ドラッグ: カーソル移動", systemImage: "cursorarrow.motionlines")

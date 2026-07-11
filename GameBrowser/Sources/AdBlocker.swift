@@ -98,15 +98,97 @@ enum AdBlocker {
 
     /// Compile (or fetch the cached) rule list.
     static func compiledRuleList() async -> WKContentRuleList? {
+        await compile(identifier: identifier, json: rulesJSON)
+    }
+
+    static func compile(identifier: String, json: String) async -> WKContentRuleList? {
         let store = WKContentRuleListStore.default()
-        if let cached = try? await store?.contentRuleList(forIdentifier: identifier),
-           let cached {
-            return cached
-        }
         let compiled = try? await store?.compileContentRuleList(
             forIdentifier: identifier,
-            encodedContentRuleList: rulesJSON
+            encodedContentRuleList: json
         )
         return compiled ?? nil   // flatten the double optional
+    }
+}
+
+/// Tracker blocking with Edge-style protection levels.
+enum TrackerBlocker {
+
+    enum Level: Int, CaseIterable {
+        case off, balanced, strict
+
+        var label: String {
+            switch self {
+            case .off: return "オフ"
+            case .balanced: return "バランス"
+            case .strict: return "厳重"
+            }
+        }
+    }
+
+    /// Analytics / fingerprinting / social tracking networks.
+    private static let trackerDomains = [
+        "google-analytics\\.com",
+        "googletagmanager\\.com",
+        "connect\\.facebook\\.net",
+        "graph\\.facebook\\.com",
+        "analytics\\.twitter\\.com",
+        "static\\.ads-twitter\\.com",
+        "scorecardresearch\\.com",
+        "quantserve\\.com",
+        "hotjar\\.com",
+        "mixpanel\\.com",
+        "segment\\.io",
+        "segment\\.com",
+        "amplitude\\.com",
+        "fullstory\\.com",
+        "mouseflow\\.com",
+        "clarity\\.ms",
+        "newrelic\\.com",
+        "nr-data\\.net",
+        "branch\\.io",
+        "appsflyer\\.com",
+        "adjust\\.com",
+        "chartbeat\\.com",
+        "parsely\\.com",
+        "crazyegg\\.com",
+        "optimizely\\.com",
+        "demdex\\.net",
+        "omtrdc\\.net",
+        "krxd\\.net",
+        "bluekai\\.com",
+        "mathtag\\.com",
+        "everesttech\\.net",
+        "uncn\\.jp",
+        "ptengine\\.jp",
+        "userinsight\\.jp",
+        "karte\\.io",
+    ]
+
+    static func identifier(for level: Level) -> String { "gb-tracking-\(level.rawValue)" }
+
+    static func rulesJSON(for level: Level) -> String {
+        guard level != .off else { return "[]" }
+        // Balanced: block trackers loaded as third-party resources.
+        // Strict: block them on any load type (may break some sites).
+        let rules: [[String: Any]] = trackerDomains.map { domain in
+            var trigger: [String: Any] = [
+                "url-filter": "^https?://([^/]+\\.)?\(domain)",
+            ]
+            if level == .balanced {
+                trigger["load-type"] = ["third-party"]
+            }
+            return ["trigger": trigger, "action": ["type": "block"]]
+        }
+        let data = try? JSONSerialization.data(withJSONObject: rules)
+        return data.flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+    }
+
+    static func compiledRuleList(for level: Level) async -> WKContentRuleList? {
+        guard level != .off else { return nil }
+        return await AdBlocker.compile(
+            identifier: identifier(for: level),
+            json: rulesJSON(for: level)
+        )
     }
 }

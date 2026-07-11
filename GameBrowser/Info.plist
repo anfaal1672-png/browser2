@@ -50,6 +50,8 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<key>NSFaceIDUsageDescription</key>
+	<string>アプリのロック解除に使用します。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Webサイトが位置情報を要求した場合に使用します。</string>
 	<key>NSCameraUsageDescription</key>
