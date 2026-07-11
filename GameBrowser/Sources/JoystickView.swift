@@ -35,11 +35,13 @@ struct JoystickView: View {
             .background(.black.opacity(0.3), in: Capsule())
             .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 0.5))
             .gesture(
-                DragGesture()
+                // Global space: the handle moves with the drag, so local
+                // coordinates would feed back into themselves and jitter.
+                DragGesture(coordinateSpace: .global)
                     .onChanged { value in
                         if moveDragStart == nil { moveDragStart = viewModel.joystickOffset }
                         let start = moveDragStart ?? .zero
-                        viewModel.joystickOffset = BrowserViewModel.clampJoystickOffset(CGSize(
+                        viewModel.joystickOffset = viewModel.clampJoystick(CGSize(
                             width: start.width + value.translation.width,
                             height: start.height + value.translation.height
                         ))

@@ -120,22 +120,32 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// Keep the joystick reachable: its default corner is bottom-leading, so
-    /// limit how far the offset can push it toward any screen edge.
-    static func clampJoystickOffset(_ offset: CGSize) -> CGSize {
-        let bounds = UIScreen.main.bounds
-        let stickSize: CGFloat = 150   // stick + move handle, roughly
+    /// Keep the joystick (including its move handle) fully inside the web
+    /// area, so it can never be tucked under the toolbars.
+    static func clampJoystickOffset(_ offset: CGSize, in container: CGSize = .zero) -> CGSize {
+        let area = container == .zero ? UIScreen.main.bounds.size : container
+        let stickWidth: CGFloat = 116
+        let stickHeight: CGFloat = 142   // handle + spacing + stick
+        let margin: CGFloat = 24         // default corner padding on both axes
         return CGSize(
-            width: min(max(offset.width, -10), max(bounds.width - stickSize, 10)),
-            height: max(min(offset.height, 10), -(bounds.height - stickSize - 120))
+            width: min(max(offset.width, -10), max(area.width - stickWidth - margin, 10)),
+            height: max(min(offset.height, 10), -max(area.height - stickHeight - margin, 10))
         )
+    }
+
+    func clampJoystick(_ offset: CGSize) -> CGSize {
+        Self.clampJoystickOffset(offset, in: webViewSize)
     }
 
     /// Called when the joystick is shown, in case a stale saved position is
     /// off screen (e.g. saved in landscape, reopened in portrait).
     func ensureJoystickOnScreen() {
-        let clamped = Self.clampJoystickOffset(joystickOffset)
+        let clamped = clampJoystick(joystickOffset)
         if clamped != joystickOffset { joystickOffset = clamped }
+    }
+
+    func resetJoystickPosition() {
+        joystickOffset = .zero
     }
     @Published var joystickUsesArrows: Bool {
         didSet { UserDefaults.standard.set(joystickUsesArrows, forKey: "joystickUsesArrows") }

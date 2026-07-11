@@ -611,6 +611,9 @@ struct ContentView: View {
                 }
                 Section("ジョイスティック") {
                     Toggle("矢印キーを送信(オフ: WASD)", isOn: $viewModel.joystickUsesArrows)
+                    Button("位置をリセット") {
+                        viewModel.resetJoystickPosition()
+                    }
                 }
                 Section("バックグラウンド") {
                     Toggle("バックグラウンドで実行を継続", isOn: $viewModel.keepAliveInBackground)
