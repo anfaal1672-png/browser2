@@ -542,6 +542,10 @@ struct ContentView: View {
                         Text("感度: \(String(format: "%.1f", viewModel.cursorSensitivity))x")
                         Slider(value: $viewModel.cursorSensitivity, in: 0.5...3.0, step: 0.1)
                     }
+                    VStack(alignment: .leading) {
+                        Text("スクロール速度: \(Int(viewModel.scrollSpeed)) px/秒")
+                        Slider(value: $viewModel.scrollSpeed, in: 300...1500, step: 50)
+                    }
                 }
                 Section("表示") {
                     Toggle("PC版サイトを表示", isOn: $viewModel.desktopMode)

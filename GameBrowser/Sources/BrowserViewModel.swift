@@ -119,6 +119,60 @@ final class BrowserViewModel: NSObject, ObservableObject {
         "(KHTML, like Gecko) Version/17.4 Safari/605.1.15"
 
     static let homeURL = URL(string: "https://www.google.com")!
+    /// Marker URL used to persist tabs showing the built-in start page.
+    static let startPageMarker = "gb://home"
+
+    // MARK: - Start page
+
+    /// Dark start page with bookmark tiles, shown in new tabs and via Home.
+    private func startPageHTML() -> String {
+        let tiles = bookmarks.map { bookmark -> String in
+            let host = URL(string: bookmark.url)?.host ?? ""
+            let initial = String(bookmark.title.prefix(1)).uppercased()
+            return """
+            <a class="tile" href="\(bookmark.url)">
+              <div class="icon"><img src="https://www.google.com/s2/favicons?domain=\(host)&sz=64" \
+            onerror="this.remove()" alt=""><span>\(initial)</span></div>
+              <div class="name">\(bookmark.title)</div>
+            </a>
+            """
+        }.joined()
+
+        return """
+        <!DOCTYPE html><html><head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+          body { background:#0b0f14; color:#e8edf2; font-family:-apple-system,sans-serif;
+                 min-height:100vh; display:flex; flex-direction:column; align-items:center;
+                 padding:52px 20px 40px; }
+          h1 { font-size:26px; font-weight:700; letter-spacing:.5px;
+               background:linear-gradient(90deg,#39d3f5,#3b82f6);
+               -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+          p.sub { color:#7b8794; font-size:13px; margin:6px 0 34px; }
+          .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr));
+                  gap:14px; width:100%; max-width:560px; }
+          .tile { display:flex; flex-direction:column; align-items:center; gap:8px;
+                  padding:14px 6px; border-radius:16px; background:#141b23;
+                  border:1px solid #1f2937; text-decoration:none; color:#e8edf2; }
+          .tile:active { background:#1d2733; }
+          .icon { width:44px; height:44px; border-radius:12px; background:#22303f;
+                  display:flex; align-items:center; justify-content:center;
+                  font-size:19px; font-weight:700; color:#39d3f5; position:relative; }
+          .icon img { width:28px; height:28px; position:absolute; }
+          .name { font-size:12px; max-width:100%; overflow:hidden;
+                  text-overflow:ellipsis; white-space:nowrap; }
+        </style></head><body>
+        <h1>GameBrowser</h1>
+        <p class="sub">ブックマークから開く、または上のバーで検索</p>
+        <div class="grid">\(tiles)</div>
+        </body></html>
+        """
+    }
+
+    func loadStartPage(in webView: WKWebView? = nil) {
+        (webView ?? self.webView).loadHTMLString(startPageHTML(), baseURL: nil)
+    }
 
     // MARK: - Init
 
@@ -194,8 +248,13 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     private func saveTabs() {
-        let urls = tabs.map {
-            ($0.webView.url ?? $0.pendingURL ?? Self.homeURL).absoluteString
+        let urls = tabs.map { tab -> String in
+            let url = tab.webView.url
+            // loadHTMLString reports about:blank — persist the start-page marker.
+            if url == nil || url?.scheme == "about" {
+                return tab.pendingURL?.absoluteString ?? Self.startPageMarker
+            }
+            return url!.absoluteString
         }
         let defaults = UserDefaults.standard
         defaults.set(urls, forKey: "savedTabs")
@@ -216,7 +275,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
             tab.pendingURL = url
             tab.snapshot = UIImage(contentsOfFile: snapshotFile(i).path)
             tabs.append(tab)
-            tab.webView.load(URLRequest(url: url))
+            if url.absoluteString == Self.startPageMarker {
+                loadStartPage(in: tab.webView)
+            } else {
+                tab.webView.load(URLRequest(url: url))
+            }
         }
         let saved = defaults.integer(forKey: "savedActiveTabIndex")
         selectTab(min(max(saved, 0), tabs.count - 1))
@@ -272,10 +335,14 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     func newTab(url: URL? = nil) {
         let tab = Tab(webView: makeWebView())
-        tab.pendingURL = url ?? Self.homeURL
+        tab.pendingURL = url ?? URL(string: Self.startPageMarker)
         tabs.append(tab)
         selectTab(tabs.count - 1)
-        tab.webView.load(URLRequest(url: url ?? Self.homeURL))
+        if let url {
+            tab.webView.load(URLRequest(url: url))
+        } else {
+            loadStartPage(in: tab.webView)
+        }
         saveTabs()
     }
 
@@ -356,7 +423,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
             webView.observe(\.url) { [weak self] wv, _ in
                 Task { @MainActor in
                     self?.currentURL = wv.url
-                    if let url = wv.url { self?.urlText = url.absoluteString }
+                    if let url = wv.url {
+                        self?.urlText = url.scheme == "about" ? "" : url.absoluteString
+                    }
                     self?.saveTabsDebounced()
                 }
             },
@@ -395,7 +464,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }
-    func goHome() { webView.load(URLRequest(url: Self.homeURL)) }
+    func goHome() { loadStartPage() }
 
     func open(_ bookmark: Bookmark) {
         if let url = URL(string: bookmark.url) { webView.load(URLRequest(url: url)) }
@@ -409,6 +478,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
     // MARK: - History
 
     fileprivate func recordHistory(url: URL, title: String) {
+        guard url.scheme == "http" || url.scheme == "https" else { return }
         let urlString = url.absoluteString
         if history.last?.url == urlString { return }
         history.append(HistoryEntry(
@@ -465,8 +535,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     func moveCursor(by delta: CGSize) {
-        let dx = delta.width * cursorSensitivity
-        let dy = delta.height * cursorSensitivity
+        // Gentle pointer acceleration: slow finger = precision, fast = distance.
+        let speed = hypot(delta.width, delta.height)
+        let accel = min(2.2, 0.7 + speed / 9)
+        let dx = delta.width * cursorSensitivity * accel
+        let dy = delta.height * cursorSensitivity * accel
         cursorPosition = clamp(CGPoint(x: cursorPosition.x + dx, y: cursorPosition.y + dy))
         js("window.__gb && __gb.move(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(f(dx)), \(f(dy)))")
     }
@@ -503,8 +576,13 @@ final class BrowserViewModel: NSObject, ObservableObject {
     private var scrollTimer: Timer?
     private var scrollDirection: CGFloat = 0
 
-    /// Constant smooth-scroll speed in px/s while a scroll button is held.
-    private static let smoothScrollSpeed: CGFloat = 700
+    /// Smooth-scroll speed in px/s while a scroll button is held (user setting).
+    @Published var scrollSpeed: Double = {
+        let saved = UserDefaults.standard.double(forKey: "scrollSpeed")
+        return saved > 0 ? saved : 700
+    }() {
+        didSet { UserDefaults.standard.set(scrollSpeed, forKey: "scrollSpeed") }
+    }
 
     /// Scroll smoothly at constant speed in `direction` (+1 down / -1 up).
     func startSmoothScroll(direction: CGFloat) {
@@ -513,7 +591,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.scroll(dx: 0, dy: self.scrollDirection * Self.smoothScrollSpeed / 60)
+                self.scroll(dx: 0, dy: self.scrollDirection * self.scrollSpeed / 60)
             }
         }
     }
