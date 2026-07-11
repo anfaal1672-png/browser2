@@ -98,6 +98,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var pointerLocked: Bool = false
     /// The page under the cursor uses `cursor: none` (draws its own cursor).
     @Published var pageHidesCursor: Bool = false
+    /// CSS cursor keyword under the pointer ("auto", "pointer", "text", ...).
+    @Published var cursorStyle: String = "auto"
     @Published var dragLocked: Bool = false
     /// True while the left mouse button is held; drives cursor press animation.
     @Published var mouseButtonDown: Bool = false
@@ -621,6 +623,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         bindObservers(to: tabs[index].webView)
         pointerLocked = false
         pageHidesCursor = false
+        cursorStyle = "auto"
         dragLocked = false
         applyKeyboardSuppression()
 
@@ -696,6 +699,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
                     }
                     self?.saveTabsDebounced()
                     self?.pageHidesCursor = false   // reset on navigation
+                    self?.cursorStyle = "auto"
                 }
             },
             webView.observe(\.title) { [weak self] wv, _ in
@@ -1057,7 +1061,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
         if type == "pointerlock" {
             pointerLocked = (dict["locked"] as? Bool) ?? false
         } else if type == "cursorstyle" {
-            let hidden = (dict["hidden"] as? Bool) ?? false
+            let style = (dict["style"] as? String) ?? "auto"
+            if cursorStyle != style { cursorStyle = style }
+            let hidden = style == "none"
             if pageHidesCursor != hidden { pageHidesCursor = hidden }
         } else if type == "notification" {
             postWebNotification(

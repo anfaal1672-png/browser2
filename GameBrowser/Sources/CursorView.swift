@@ -1,20 +1,73 @@
 import SwiftUI
 
-/// The virtual mouse cursor drawn above the web view.
+/// The virtual mouse cursor drawn above the web view. Like Windows/macOS,
+/// its shape follows the CSS `cursor` of the element under the pointer.
 struct CursorView: View {
     let position: CGPoint
     let pressed: Bool
+    var style: String = "auto"
+
+    private enum Shape {
+        case arrow                    // default / auto
+        case symbol(String, rotation: Double = 0)   // centered SF Symbol
+    }
+
+    private var shape: Shape {
+        switch style {
+        case "pointer":                 return .symbol("hand.point.up.left.fill")
+        case "text", "vertical-text":   return .symbol("text.cursor")
+        case "wait", "progress":        return .symbol("hourglass")
+        case "crosshair", "cell":       return .symbol("plus")
+        case "move", "all-scroll":      return .symbol("arrow.up.and.down.and.arrow.left.and.right")
+        case "grab":                    return .symbol("hand.raised")
+        case "grabbing":                return .symbol("hand.raised.fill")
+        case "not-allowed", "no-drop":  return .symbol("circle.slash")
+        case "help":                    return .symbol("questionmark.circle")
+        case "zoom-in":                 return .symbol("plus.magnifyingglass")
+        case "zoom-out":                return .symbol("minus.magnifyingglass")
+        case "ns-resize", "n-resize", "s-resize", "row-resize":
+            return .symbol("arrow.up.and.down")
+        case "ew-resize", "e-resize", "w-resize", "col-resize":
+            return .symbol("arrow.left.and.right")
+        case "nwse-resize", "nw-resize", "se-resize":
+            return .symbol("arrow.up.and.down", rotation: 45)
+        case "nesw-resize", "ne-resize", "sw-resize":
+            return .symbol("arrow.up.and.down", rotation: -45)
+        case "copy":                    return .symbol("plus.square.on.square")
+        case "alias":                   return .symbol("arrow.up.right.square")
+        case "context-menu":            return .symbol("list.bullet.rectangle")
+        default:                        return .arrow
+        }
+    }
 
     var body: some View {
-        CursorShape()
-            .fill(.white)
-            .overlay(CursorShape().stroke(.black, lineWidth: 1.2))
-            .frame(width: 22, height: 22)
-            .scaleEffect(pressed ? 0.82 : 1.0, anchor: .topLeading)
-            .shadow(color: .black.opacity(0.45), radius: 2, x: 1, y: 1)
-            .position(x: position.x + 11, y: position.y + 11)
-            .animation(.easeOut(duration: 0.08), value: pressed)
-            .allowsHitTesting(false)
+        Group {
+            switch shape {
+            case .arrow:
+                CursorShape()
+                    .fill(.white)
+                    .overlay(CursorShape().stroke(.black, lineWidth: 1.2))
+                    .frame(width: 22, height: 22)
+                    .scaleEffect(pressed ? 0.82 : 1.0, anchor: .topLeading)
+                    .shadow(color: .black.opacity(0.45), radius: 2, x: 1, y: 1)
+                    // The arrow's hotspot is its top-left tip.
+                    .position(x: position.x + 11, y: position.y + 11)
+
+            case .symbol(let name, let rotation):
+                Image(systemName: name)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .rotationEffect(.degrees(rotation))
+                    .scaleEffect(pressed ? 0.85 : 1.0)
+                    .shadow(color: .black.opacity(0.8), radius: 1.5)
+                    .shadow(color: .black.opacity(0.5), radius: 3)
+                    // Symbol cursors (I-beam, crosshair, resize...) are
+                    // hotspot-centered, like the real OS cursors.
+                    .position(position)
+            }
+        }
+        .animation(.easeOut(duration: 0.08), value: pressed)
+        .allowsHitTesting(false)
     }
 }
 

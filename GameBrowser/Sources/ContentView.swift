@@ -28,7 +28,8 @@ struct ContentView: View {
                         if !viewModel.pointerLocked && !viewModel.pageHidesCursor {
                             CursorView(
                                 position: viewModel.cursorPosition,
-                                pressed: viewModel.dragLocked || viewModel.mouseButtonDown
+                                pressed: viewModel.dragLocked || viewModel.mouseButtonDown,
+                                style: viewModel.cursorStyle
                             )
                             .opacity(viewModel.cursorFaded ? 0.35 : 1)
                             .animation(.easeInOut(duration: 0.4), value: viewModel.cursorFaded)

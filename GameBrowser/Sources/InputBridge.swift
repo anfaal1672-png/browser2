@@ -281,7 +281,7 @@ enum InputBridge {
                 try {
                     window.webkit.messageHandlers.gbEvents.postMessage({
                         type: 'cursorstyle',
-                        hidden: getComputedStyle(target).cursor === 'none',
+                        style: getComputedStyle(target).cursor || 'auto',
                     });
                 } catch (e) {}
             },
