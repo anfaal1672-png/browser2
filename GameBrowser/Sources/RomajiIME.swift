@@ -137,13 +137,26 @@ enum KanjiConverter {
         if segments.count == 1 {
             results = segments[0]
         } else {
-            // Best guess: first choice of every segment joined, then
-            // variations of the first segment.
-            let rest = segments.dropFirst().map { $0[0] }.joined()
-            results = segments[0].prefix(6).map { $0 + rest }
+            // Expand combinations: every candidate of each segment, one
+            // segment varied at a time against the first choices of the rest.
+            let firsts = segments.map { $0[0] }
+            results.append(firsts.joined())
+            for (i, segment) in segments.enumerated() {
+                for candidate in segment.dropFirst() {
+                    var combo = firsts
+                    combo[i] = candidate
+                    results.append(combo.joined())
+                }
+            }
         }
-        // Deduplicate, drop the raw kana (shown separately), cap the list.
+        // Supplement the API's ~5 per segment with local transliterations.
+        if let katakana = kana.applyingTransform(.hiraganaToKatakana, reverse: false),
+           katakana != kana {
+            results.append(katakana)
+        }
+
+        // Deduplicate and drop the raw kana (shown separately).
         var seen = Set<String>()
-        return results.filter { seen.insert($0).inserted && $0 != kana }.prefix(9).map { $0 }
+        return results.filter { seen.insert($0).inserted && $0 != kana }
     }
 }
