@@ -696,6 +696,91 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// Shows the native-IME text input bar (for Japanese and other languages).
     @Published var showTextInput: Bool = false
 
+    // MARK: - Built-in romaji IME
+
+    /// While true, virtual keyboard letters feed the romaji buffer instead of
+    /// sending key events to the page.
+    @Published var imeActive: Bool = false {
+        didSet { if !imeActive { imeClear() } }
+    }
+    @Published var imeKana: String = ""
+    @Published var imePending: String = ""
+    @Published var imeCandidates: [String] = []
+    private var romajiBuffer: String = ""
+    private var candidateTask: Task<Void, Never>?
+
+    var imeComposition: String { imeKana + imePending }
+
+    func imeType(_ ch: String) {
+        romajiBuffer += ch.lowercased()
+        recompose()
+    }
+
+    func imeBackspace() {
+        if romajiBuffer.isEmpty {
+            tapKey(InputBridge.backspace)   // empty buffer: delete in the page
+            return
+        }
+        romajiBuffer.removeLast()
+        recompose()
+    }
+
+    /// Space during composition = request kanji candidates; otherwise a real space.
+    func imeSpace() {
+        if imeComposition.isEmpty {
+            tapKey(InputBridge.space)
+        } else {
+            fetchCandidates()
+        }
+    }
+
+    /// Enter = commit composition as-is; otherwise a real Enter.
+    func imeConfirm() {
+        if imeComposition.isEmpty {
+            tapKey(InputBridge.enter)
+        } else {
+            insertText(imeComposition)
+            imeClear()
+        }
+    }
+
+    func imeSelectCandidate(_ candidate: String) {
+        insertText(candidate)
+        imeClear()
+        hapticLight()
+    }
+
+    private func imeClear() {
+        romajiBuffer = ""
+        imeKana = ""
+        imePending = ""
+        imeCandidates = []
+        candidateTask?.cancel()
+    }
+
+    private func recompose() {
+        let (kana, pending) = RomajiConverter.convert(romajiBuffer)
+        imeKana = kana
+        imePending = pending
+        fetchCandidates(debounced: true)
+    }
+
+    private func fetchCandidates(debounced: Bool = false) {
+        candidateTask?.cancel()
+        let kana = imeKana
+        guard !kana.isEmpty else {
+            imeCandidates = []
+            return
+        }
+        candidateTask = Task { [weak self] in
+            if debounced { try? await Task.sleep(for: .milliseconds(250)) }
+            guard !Task.isCancelled else { return }
+            let results = await KanjiConverter.candidates(for: kana)
+            guard !Task.isCancelled else { return }
+            self?.imeCandidates = results
+        }
+    }
+
     /// Insert committed text into the page's focused editable element.
     func insertText(_ text: String) {
         guard !text.isEmpty else { return }

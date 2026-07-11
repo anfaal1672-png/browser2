@@ -12,6 +12,9 @@ struct VirtualKeyboardView: View {
 
     var body: some View {
         VStack(spacing: 6) {
+            if viewModel.imeActive {
+                imeBar
+            }
             if viewModel.fullKeyboard {
                 fullKeyboard
             } else {
@@ -112,19 +115,89 @@ struct VirtualKeyboardView: View {
         }
     }
 
-    /// Opens the native-IME input bar for Japanese text entry.
+    // MARK: - Built-in romaji IME
+
+    /// Composition + kanji candidate bar shown above the keys while the IME is on.
+    private var imeBar: some View {
+        HStack(spacing: 8) {
+            // Composition display: converted kana + pending romaji.
+            HStack(spacing: 0) {
+                Text(viewModel.imeKana)
+                    .foregroundStyle(.white)
+                Text(viewModel.imePending)
+                    .foregroundStyle(.secondary)
+                if viewModel.imeComposition.isEmpty {
+                    Text("ローマ字で入力…")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.system(size: 15))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .frame(minWidth: 110, alignment: .leading)
+            .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+
+            // Kanji candidates from the conversion API.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    if !viewModel.imeComposition.isEmpty {
+                        candidateChip(viewModel.imeComposition)
+                    }
+                    ForEach(viewModel.imeCandidates, id: \.self) { candidate in
+                        candidateChip(candidate)
+                    }
+                }
+            }
+
+            Button {
+                viewModel.imeActive = false
+                viewModel.showTextInput = true   // switch to the OS keyboard
+            } label: {
+                Image(systemName: "keyboard.badge.ellipsis")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                viewModel.imeActive = false
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func candidateChip(_ text: String) -> some View {
+        Button {
+            viewModel.imeSelectCandidate(text)
+        } label: {
+            Text(text)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(Color.cyan.opacity(0.22), in: Capsule())
+                .overlay(Capsule().stroke(Color.cyan.opacity(0.4), lineWidth: 0.5))
+        }
+    }
+
+    /// Toggles the built-in romaji IME (switches to the full layout for letters).
     private var imeKey: some View {
         Button {
             viewModel.hapticLight()
-            viewModel.showTextInput = true
+            viewModel.imeActive.toggle()
+            if viewModel.imeActive { viewModel.fullKeyboard = true }
         } label: {
             Text("あ")
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(viewModel.showTextInput ? Color.black : Color.cyan)
+                .foregroundStyle(viewModel.imeActive ? Color.black : Color.cyan)
                 .frame(width: 40, height: 40)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(viewModel.showTextInput ? Color.cyan : Color.white.opacity(0.14))
+                        .fill(viewModel.imeActive ? Color.cyan : Color.white.opacity(0.14))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
@@ -181,6 +254,18 @@ struct KeyButton: View {
                         guard !touchDown else { return }
                         touchDown = true
                         viewModel.hapticLight()
+                        // IME mode: letters feed the romaji buffer instead of the page.
+                        if viewModel.imeActive, !sticky {
+                            switch key {
+                            case InputBridge.backspace: viewModel.imeBackspace()
+                            case InputBridge.enter: viewModel.imeConfirm()
+                            case InputBridge.space: viewModel.imeSpace()
+                            case InputBridge.escape: viewModel.imeActive = false
+                            default:
+                                if key.key.count == 1 { viewModel.imeType(key.key) }
+                            }
+                            return
+                        }
                         if sticky {
                             if viewModel.pressedKeys.contains(key) {
                                 viewModel.keyUp(key)
@@ -206,7 +291,7 @@ struct KeyButton: View {
                         touchDown = false
                         repeatTimer?.invalidate()
                         repeatTimer = nil
-                        if !sticky { viewModel.keyUp(key) }
+                        if !sticky && !viewModel.imeActive { viewModel.keyUp(key) }
                     }
             )
     }
