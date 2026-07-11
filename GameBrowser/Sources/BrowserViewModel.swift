@@ -2,6 +2,7 @@ import SwiftUI
 import WebKit
 import Combine
 import CoreLocation
+import UserNotifications
 
 @MainActor
 final class BrowserViewModel: NSObject, ObservableObject {
@@ -151,6 +152,38 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     private let locationManager = CLLocationManager()
+
+    /// Allow sites to post iOS notifications via the bridged Notification API.
+    @Published var webNotificationsEnabled: Bool {
+        didSet { UserDefaults.standard.set(webNotificationsEnabled, forKey: "webNotificationsEnabled") }
+    }
+
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+    }
+
+    fileprivate func postWebNotification(title: String, body: String) {
+        guard webNotificationsEnabled else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            let deliver = {
+                let content = UNMutableNotificationContent()
+                content.title = title.isEmpty ? "GameBrowser" : title
+                content.body = body
+                content.sound = .default
+                center.add(UNNotificationRequest(
+                    identifier: UUID().uuidString, content: content, trigger: nil))
+            }
+            if settings.authorizationStatus == .notDetermined {
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                    if granted { deliver() }
+                }
+            } else if settings.authorizationStatus == .authorized ||
+                      settings.authorizationStatus == .provisional {
+                deliver()
+            }
+        }
+    }
 
     /// Trigger the system location permission prompt (used by page geolocation).
     func requestLocationPermission() {
@@ -314,6 +347,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         blockPopups = defaults.object(forKey: "blockPopups") as? Bool ?? false
         javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool ?? true
         capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
+        webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool ?? true
         if let data = defaults.data(forKey: "history"),
            let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
@@ -337,6 +371,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         super.init()
 
         gamepad = GamepadController(viewModel: self)
+        UNUserNotificationCenter.current().delegate = self
         restoreTabs()
 
         // Persist tabs when the app is backgrounded or killed by the system.
@@ -947,11 +982,28 @@ final class BrowserViewModel: NSObject, ObservableObject {
             pointerLocked = (dict["locked"] as? Bool) ?? false
         } else if type == "cursorstyle" {
             pageHidesCursor = (dict["hidden"] as? Bool) ?? false
+        } else if type == "notification" {
+            postWebNotification(
+                title: dict["title"] as? String ?? "",
+                body: dict["body"] as? String ?? ""
+            )
+        } else if type == "notificationPermission" {
+            requestNotificationPermission()
         }
     }
 }
 
 // MARK: - WKNavigationDelegate / WKUIDelegate
+
+extension BrowserViewModel: UNUserNotificationCenterDelegate {
+    /// Show web notifications as banners even while the app is in the foreground.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler:
+                                            @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+}
 
 extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
 

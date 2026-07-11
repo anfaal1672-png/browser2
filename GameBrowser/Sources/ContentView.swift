@@ -626,6 +626,10 @@ struct ContentView: View {
                     Button("位置情報の使用を許可する") {
                         viewModel.requestLocationPermission()
                     }
+                    Toggle("サイトからの通知を許可", isOn: $viewModel.webNotificationsEnabled)
+                    Button("通知の許可をリクエスト") {
+                        viewModel.requestNotificationPermission()
+                    }
                 }
                 Section("プライバシー") {
                     Button("閲覧データを消去(Cookie・キャッシュ)", role: .destructive) {

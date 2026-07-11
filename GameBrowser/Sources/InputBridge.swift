@@ -464,6 +464,35 @@ enum InputBridge {
             finally { state.raw = false; }
         });
 
+        // Web Notification API polyfill: WKWebView has no Notification support,
+        // so bridge it to native iOS local notifications.
+        try {
+            const NotificationShim = function (title, options) {
+                options = options || {};
+                this.title = title;
+                this.body = options.body || '';
+                try {
+                    window.webkit.messageHandlers.gbEvents.postMessage({
+                        type: 'notification',
+                        title: String(title),
+                        body: String(options.body || ''),
+                    });
+                } catch (e) {}
+                this.close = function () {};
+                this.onclick = null; this.onshow = null; this.onerror = null; this.onclose = null;
+            };
+            NotificationShim.permission = 'granted';
+            NotificationShim.requestPermission = function (cb) {
+                try {
+                    window.webkit.messageHandlers.gbEvents.postMessage({ type: 'notificationPermission' });
+                } catch (e) {}
+                const result = Promise.resolve('granted');
+                if (cb) { result.then(cb); }
+                return result;
+            };
+            window.Notification = NotificationShim;
+        } catch (e) {}
+
         // Notify native code about pointer-lock transitions so the cursor overlay
         // can hide. Message handlers are reachable from subframes too.
         document.addEventListener('pointerlockchange', function () {
