@@ -214,27 +214,32 @@ struct ContentView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
 
-            if urlFieldFocused {
-                TextField("URLまたは検索語を入力", text: $viewModel.urlText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.webSearch)
-                    .submitLabel(.go)
-                    .focused($urlFieldFocused)
-                    .onSubmit {
-                        viewModel.submitURL()
-                        urlFieldFocused = false
+            // The text field stays in the hierarchy at all times — focusing a
+            // field that isn't rendered yet silently fails. When idle it is
+            // invisible and the domain label is shown on top.
+            TextField("URLまたは検索語を入力", text: $viewModel.urlText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.webSearch)
+                .submitLabel(.go)
+                .focused($urlFieldFocused)
+                .onSubmit {
+                    viewModel.submitURL()
+                    urlFieldFocused = false
+                }
+                .font(.system(size: 14))
+                .opacity(urlFieldFocused ? 1 : 0)
+                .overlay {
+                    if !urlFieldFocused {
+                        Text(viewModel.currentURL?.host ?? (viewModel.urlText.isEmpty ? "検索またはURLを入力" : viewModel.urlText))
+                            .font(.system(size: 14))
+                            .foregroundStyle(viewModel.currentURL == nil ? .secondary : .primary)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                            .onTapGesture { urlFieldFocused = true }
                     }
-                    .font(.system(size: 14))
-            } else {
-                Text(viewModel.currentURL?.host ?? (viewModel.urlText.isEmpty ? "検索またはURLを入力" : viewModel.urlText))
-                    .font(.system(size: 14))
-                    .foregroundStyle(viewModel.currentURL == nil ? .secondary : .primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .onTapGesture { urlFieldFocused = true }
-            }
+                }
 
             if viewModel.isLoading {
                 ProgressView().scaleEffect(0.6)
