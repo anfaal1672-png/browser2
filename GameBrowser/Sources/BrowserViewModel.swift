@@ -49,6 +49,16 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var dragLocked: Bool = false
     /// True while the left mouse button is held; drives cursor press animation.
     @Published var mouseButtonDown: Bool = false
+    /// Cursor dims after a few seconds without movement.
+    @Published var cursorFaded: Bool = false
+    private var cursorFadeTask: Task<Void, Never>?
+
+    @Published var joystickVisible: Bool = false
+    @Published var joystickUsesArrows: Bool {
+        didSet { UserDefaults.standard.set(joystickUsesArrows, forKey: "joystickUsesArrows") }
+    }
+
+    private var gamepad: GamepadController?
     @Published var pressedKeys: Set<InputBridge.Key> = []
     @Published var immersive: Bool = false
 
@@ -181,6 +191,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let savedSensitivity = defaults.double(forKey: "cursorSensitivity")
         cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
         showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool ?? true
+        joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool ?? true
         if let data = defaults.data(forKey: "history"),
            let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
@@ -203,6 +214,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         super.init()
 
+        gamepad = GamepadController(viewModel: self)
         restoreTabs()
 
         // Persist tabs when the app is backgrounded or killed by the system.
@@ -542,10 +554,23 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let dy = delta.height * cursorSensitivity * accel
         cursorPosition = clamp(CGPoint(x: cursorPosition.x + dx, y: cursorPosition.y + dy))
         js("window.__gb && __gb.move(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(f(dx)), \(f(dy)))")
+        wakeCursor()
+    }
+
+    /// Reset the idle-fade timer: cursor is fully visible while in use.
+    private func wakeCursor() {
+        cursorFaded = false
+        cursorFadeTask?.cancel()
+        cursorFadeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.cursorFaded = true
+        }
     }
 
     func mouseDown(button: Int = 0) {
         if button == 0 { mouseButtonDown = true }
+        wakeCursor()
         js("window.__gb && __gb.down(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(button))")
     }
 

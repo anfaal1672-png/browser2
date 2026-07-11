@@ -16,6 +16,8 @@
 		AA00000120000007000000AA /* VirtualKeyboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000007000000AA /* VirtualKeyboardView.swift */; };
 		AA00000120000008000000AA /* InputBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000008000000AA /* InputBridge.swift */; };
 		AA00000120000009000000AA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA00000110000009000000AA /* Assets.xcassets */; };
+		AA0000012000000B000000AA /* JoystickView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000011000000B000000AA /* JoystickView.swift */; };
+		AA0000012000000C000000AA /* GamepadController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000011000000C000000AA /* GamepadController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +32,8 @@
 		AA00000110000009000000AA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA0000011000000A000000AA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA00000130000001000000AA /* GameBrowser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GameBrowser.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000011000000B000000AA /* JoystickView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoystickView.swift; sourceTree = "<group>"; };
+		AA0000011000000C000000AA /* GamepadController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GamepadController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -72,6 +76,8 @@
 				AA00000110000006000000AA /* CursorView.swift */,
 				AA00000110000007000000AA /* VirtualKeyboardView.swift */,
 				AA00000110000008000000AA /* InputBridge.swift */,
+				AA0000011000000C000000AA /* GamepadController.swift */,
+				AA0000011000000B000000AA /* JoystickView.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -162,6 +168,8 @@
 				AA00000120000006000000AA /* CursorView.swift in Sources */,
 				AA00000120000007000000AA /* VirtualKeyboardView.swift in Sources */,
 				AA00000120000008000000AA /* InputBridge.swift in Sources */,
+				AA0000012000000C000000AA /* GamepadController.swift in Sources */,
+				AA0000012000000B000000AA /* JoystickView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

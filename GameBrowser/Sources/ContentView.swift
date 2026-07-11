@@ -30,11 +30,21 @@ struct ContentView: View {
                                 position: viewModel.cursorPosition,
                                 pressed: viewModel.dragLocked || viewModel.mouseButtonDown
                             )
+                            .opacity(viewModel.cursorFaded ? 0.35 : 1)
+                            .animation(.easeInOut(duration: 0.4), value: viewModel.cursorFaded)
                         }
                     }
                 }
                 .overlay(alignment: .trailing) {
                     if viewModel.cursorMode && viewModel.showScrollButtons { scrollStrip }
+                }
+                .overlay(alignment: .bottomLeading) {
+                    if viewModel.joystickVisible {
+                        JoystickView(viewModel: viewModel)
+                            .padding(.leading, 14)
+                            .padding(.bottom, 14)
+                            .transition(.scale.combined(with: .opacity))
+                    }
                 }
                 .onAppear { viewModel.webViewSize = geo.size }
                 .onChange(of: geo.size) { _, newSize in viewModel.webViewSize = newSize }
@@ -377,6 +387,16 @@ struct ContentView: View {
             .disabled(!viewModel.cursorMode)
 
             controlButton(
+                icon: "dpad",
+                label: "スティック",
+                active: viewModel.joystickVisible
+            ) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.joystickVisible.toggle()
+                }
+            }
+
+            controlButton(
                 icon: "keyboard",
                 label: "キーボード",
                 active: viewModel.keyboardVisible
@@ -546,6 +566,9 @@ struct ContentView: View {
                         Text("スクロール速度: \(Int(viewModel.scrollSpeed)) px/秒")
                         Slider(value: $viewModel.scrollSpeed, in: 300...1500, step: 50)
                     }
+                }
+                Section("ジョイスティック") {
+                    Toggle("矢印キーを送信(オフ: WASD)", isOn: $viewModel.joystickUsesArrows)
                 }
                 Section("表示") {
                     Toggle("PC版サイトを表示", isOn: $viewModel.desktopMode)
