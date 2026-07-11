@@ -110,7 +110,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var joystickVisible: Bool = false
 
     /// User-dragged joystick position offset from its default corner.
-    @Published var joystickOffset: CGSize = Self.clampJoystickOffset(CGSize(
+    @Published var joystickOffset: CGSize = BrowserViewModel.clampJoystickOffset(CGSize(
         width: UserDefaults.standard.double(forKey: "joystickOffsetX"),
         height: UserDefaults.standard.double(forKey: "joystickOffsetY")
     )) {
