@@ -10,33 +10,38 @@ struct CursorView: View {
     private enum Shape {
         case arrow                    // default / auto
         case pointerHand              // hotspot at the fingertip
-        case symbol(String, rotation: Double = 0)   // centered SF Symbol
+        case symbol(String, rotation: Double)   // centered SF Symbol
+    }
+
+    // Enum cases can't take default arguments, hence the helper.
+    private static func sym(_ name: String, _ rotation: Double = 0) -> Shape {
+        .symbol(name, rotation: rotation)
     }
 
     private var shape: Shape {
         switch style {
         case "pointer":                 return .pointerHand
-        case "text", "vertical-text":   return .symbol("text.cursor")
-        case "wait", "progress":        return .symbol("hourglass")
-        case "crosshair", "cell":       return .symbol("plus")
-        case "move", "all-scroll":      return .symbol("arrow.up.and.down.and.arrow.left.and.right")
-        case "grab":                    return .symbol("hand.raised")
-        case "grabbing":                return .symbol("hand.raised.fill")
-        case "not-allowed", "no-drop":  return .symbol("circle.slash")
-        case "help":                    return .symbol("questionmark.circle")
-        case "zoom-in":                 return .symbol("plus.magnifyingglass")
-        case "zoom-out":                return .symbol("minus.magnifyingglass")
+        case "text", "vertical-text":   return Self.sym("text.cursor")
+        case "wait", "progress":        return Self.sym("hourglass")
+        case "crosshair", "cell":       return Self.sym("plus")
+        case "move", "all-scroll":      return Self.sym("arrow.up.and.down.and.arrow.left.and.right")
+        case "grab":                    return Self.sym("hand.raised")
+        case "grabbing":                return Self.sym("hand.raised.fill")
+        case "not-allowed", "no-drop":  return Self.sym("circle.slash")
+        case "help":                    return Self.sym("questionmark.circle")
+        case "zoom-in":                 return Self.sym("plus.magnifyingglass")
+        case "zoom-out":                return Self.sym("minus.magnifyingglass")
         case "ns-resize", "n-resize", "s-resize", "row-resize":
-            return .symbol("arrow.up.and.down")
+            return Self.sym("arrow.up.and.down")
         case "ew-resize", "e-resize", "w-resize", "col-resize":
-            return .symbol("arrow.left.and.right")
+            return Self.sym("arrow.left.and.right")
         case "nwse-resize", "nw-resize", "se-resize":
-            return .symbol("arrow.up.and.down", rotation: 45)
+            return Self.sym("arrow.up.and.down", 45)
         case "nesw-resize", "ne-resize", "sw-resize":
-            return .symbol("arrow.up.and.down", rotation: -45)
-        case "copy":                    return .symbol("plus.square.on.square")
-        case "alias":                   return .symbol("arrow.up.right.square")
-        case "context-menu":            return .symbol("list.bullet.rectangle")
+            return Self.sym("arrow.up.and.down", -45)
+        case "copy":                    return Self.sym("plus.square.on.square")
+        case "alias":                   return Self.sym("arrow.up.right.square")
+        case "context-menu":            return Self.sym("list.bullet.rectangle")
         default:                        return .arrow
         }
     }
