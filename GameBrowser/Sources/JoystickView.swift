@@ -7,6 +7,8 @@ struct JoystickView: View {
 
     @State private var offset: CGSize = .zero
     @State private var heldKeys: Set<InputBridge.Key> = []
+    @State private var repeatTimer: Timer?
+    @State private var moveDragStart: CGSize? = nil
 
     private let radius: CGFloat = 58
     private let knobRadius: CGFloat = 26
@@ -16,6 +18,36 @@ struct JoystickView: View {
     private let releaseThreshold: CGFloat = 0.26
 
     var body: some View {
+        VStack(spacing: 4) {
+            moveHandle
+            stick
+        }
+        .offset(viewModel.joystickOffset)
+    }
+
+    /// Grip above the stick: drag to reposition the whole joystick.
+    private var moveHandle: some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(.white.opacity(0.5))
+            .frame(width: 44, height: 22)
+            .background(.black.opacity(0.3), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 0.5))
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if moveDragStart == nil { moveDragStart = viewModel.joystickOffset }
+                        let start = moveDragStart ?? .zero
+                        viewModel.joystickOffset = CGSize(
+                            width: start.width + value.translation.width,
+                            height: start.height + value.translation.height
+                        )
+                    }
+                    .onEnded { _ in moveDragStart = nil }
+            )
+    }
+
+    private var stick: some View {
         ZStack {
             Circle()
                 .fill(.black.opacity(0.30))
@@ -86,5 +118,23 @@ struct JoystickView: View {
         for key in wanted.subtracting(heldKeys) { viewModel.keyDown(key) }
         heldKeys = wanted
         viewModel.hapticSelection()
+        updateRepeat()
+    }
+
+    /// OS-style auto-repeat while directions are held (repeat=true keydowns).
+    private func updateRepeat() {
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        guard !heldKeys.isEmpty else { return }
+        let vm = viewModel
+        repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+            Task { @MainActor in
+                self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { _ in
+                    Task { @MainActor in
+                        for key in self.heldKeys { vm.repeatKey(key) }
+                    }
+                }
+            }
+        }
     }
 }

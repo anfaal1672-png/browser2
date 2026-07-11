@@ -247,13 +247,27 @@ struct KeyButton: View {
                         viewModel.hapticLight()
                         // IME mode: letters feed the romaji buffer instead of the page.
                         if viewModel.imeActive, !sticky {
+                            let vm = viewModel
+                            let k = key
+                            var imeAction: (() -> Void)?
                             switch key {
-                            case InputBridge.backspace: viewModel.imeBackspace()
-                            case InputBridge.enter: viewModel.imeConfirm()
-                            case InputBridge.space: viewModel.imeSpace()
-                            case InputBridge.escape: viewModel.imeActive = false
+                            case InputBridge.backspace: imeAction = { vm.imeBackspace() }
+                            case InputBridge.enter: vm.imeConfirm()
+                            case InputBridge.space: vm.imeSpace()
+                            case InputBridge.escape: vm.imeActive = false
                             default:
-                                if key.key.count == 1 { viewModel.imeType(key.key) }
+                                if k.key.count == 1 { imeAction = { vm.imeType(k.key) } }
+                            }
+                            if let imeAction {
+                                imeAction()
+                                // Auto-repeat for letters and backspace.
+                                repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+                                    Task { @MainActor in
+                                        self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { _ in
+                                            Task { @MainActor in imeAction() }
+                                        }
+                                    }
+                                }
                             }
                             return
                         }

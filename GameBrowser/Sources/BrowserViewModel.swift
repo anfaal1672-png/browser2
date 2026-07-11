@@ -84,6 +84,17 @@ final class BrowserViewModel: NSObject, ObservableObject {
     private var cursorFadeTask: Task<Void, Never>?
 
     @Published var joystickVisible: Bool = false
+
+    /// User-dragged joystick position offset from its default corner.
+    @Published var joystickOffset: CGSize = CGSize(
+        width: UserDefaults.standard.double(forKey: "joystickOffsetX"),
+        height: UserDefaults.standard.double(forKey: "joystickOffsetY")
+    ) {
+        didSet {
+            UserDefaults.standard.set(joystickOffset.width, forKey: "joystickOffsetX")
+            UserDefaults.standard.set(joystickOffset.height, forKey: "joystickOffsetY")
+        }
+    }
     @Published var joystickUsesArrows: Bool {
         didSet { UserDefaults.standard.set(joystickUsesArrows, forKey: "joystickUsesArrows") }
     }
