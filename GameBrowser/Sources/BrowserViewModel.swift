@@ -110,14 +110,32 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var joystickVisible: Bool = false
 
     /// User-dragged joystick position offset from its default corner.
-    @Published var joystickOffset: CGSize = CGSize(
+    @Published var joystickOffset: CGSize = Self.clampJoystickOffset(CGSize(
         width: UserDefaults.standard.double(forKey: "joystickOffsetX"),
         height: UserDefaults.standard.double(forKey: "joystickOffsetY")
-    ) {
+    )) {
         didSet {
             UserDefaults.standard.set(joystickOffset.width, forKey: "joystickOffsetX")
             UserDefaults.standard.set(joystickOffset.height, forKey: "joystickOffsetY")
         }
+    }
+
+    /// Keep the joystick reachable: its default corner is bottom-leading, so
+    /// limit how far the offset can push it toward any screen edge.
+    static func clampJoystickOffset(_ offset: CGSize) -> CGSize {
+        let bounds = UIScreen.main.bounds
+        let stickSize: CGFloat = 150   // stick + move handle, roughly
+        return CGSize(
+            width: min(max(offset.width, -10), max(bounds.width - stickSize, 10)),
+            height: max(min(offset.height, 10), -(bounds.height - stickSize - 120))
+        )
+    }
+
+    /// Called when the joystick is shown, in case a stale saved position is
+    /// off screen (e.g. saved in landscape, reopened in portrait).
+    func ensureJoystickOnScreen() {
+        let clamped = Self.clampJoystickOffset(joystickOffset)
+        if clamped != joystickOffset { joystickOffset = clamped }
     }
     @Published var joystickUsesArrows: Bool {
         didSet { UserDefaults.standard.set(joystickUsesArrows, forKey: "joystickUsesArrows") }

@@ -23,6 +23,7 @@ struct JoystickView: View {
             stick
         }
         .offset(viewModel.joystickOffset)
+        .onAppear { viewModel.ensureJoystickOnScreen() }
     }
 
     /// Grip above the stick: drag to reposition the whole joystick.
@@ -38,10 +39,10 @@ struct JoystickView: View {
                     .onChanged { value in
                         if moveDragStart == nil { moveDragStart = viewModel.joystickOffset }
                         let start = moveDragStart ?? .zero
-                        viewModel.joystickOffset = CGSize(
+                        viewModel.joystickOffset = BrowserViewModel.clampJoystickOffset(CGSize(
                             width: start.width + value.translation.width,
                             height: start.height + value.translation.height
-                        )
+                        ))
                     }
                     .onEnded { _ in moveDragStart = nil }
             )
