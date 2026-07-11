@@ -683,13 +683,17 @@ final class BrowserViewModel: NSObject, ObservableObject {
         joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
         hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool ?? true
         controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme")) ?? .classic
-        httpsOnly = defaults.object(forKey: "httpsOnly") as? Bool ?? false
+        httpsOnly = defaults.object(forKey: "httpsOnly") as? Bool ?? true
         fraudWarning = defaults.object(forKey: "fraudWarning") as? Bool ?? true
         blockPopups = defaults.object(forKey: "blockPopups") as? Bool ?? false
         javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool ?? true
         capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
         adBlockEnabled = defaults.object(forKey: "adBlockEnabled") as? Bool ?? true
-        trackingLevel = TrackerBlocker.Level(rawValue: defaults.integer(forKey: "trackingLevel")) ?? .balanced
+        if let saved = defaults.object(forKey: "trackingLevel") as? Int {
+            trackingLevel = TrackerBlocker.Level(rawValue: saved) ?? .balanced
+        } else {
+            trackingLevel = .balanced   // on by default
+        }
         searchEngine = SearchEngine(rawValue: defaults.integer(forKey: "searchEngine")) ?? .google
         newTabPage = NewTabPage(rawValue: defaults.integer(forKey: "newTabPage")) ?? .home
         appLockEnabled = defaults.bool(forKey: "appLockEnabled")
