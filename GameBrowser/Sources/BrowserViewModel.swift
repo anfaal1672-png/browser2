@@ -3,6 +3,7 @@ import WebKit
 import Combine
 import CoreLocation
 import UserNotifications
+import AVFAudio
 
 @MainActor
 final class BrowserViewModel: NSObject, ObservableObject {
@@ -372,6 +373,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         gamepad = GamepadController(viewModel: self)
         UNUserNotificationCenter.current().delegate = self
+
+        // Playback session + the "audio" background mode keep pages alive in
+        // the background while they are producing sound (game music, calls).
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        try? AVAudioSession.sharedInstance().setActive(true)
         restoreTabs()
 
         // Persist tabs when the app is backgrounded or killed by the system.
