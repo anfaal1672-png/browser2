@@ -18,6 +18,7 @@ enum InputBridge {
             raw: false,       // true while handling a call forwarded from a parent frame
             captured: null,   // element holding pointer capture for our pointerId
             dnd: null,        // in-progress emulated HTML5 drag-and-drop
+            cursorHidden: false,   // page is showing its own cursor (cursor: none)
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
@@ -197,6 +198,18 @@ enum InputBridge {
                 firePointer('pointermove', target, x, y, -1, extra);
                 fireMouse('mousemove', target, x, y, 0, extra);
                 updateDnd(x, y);
+
+                // Games that draw their own cursor set `cursor: none` — tell
+                // native code so the overlay arrow disappears over them.
+                try {
+                    const style = getComputedStyle(target).cursor;
+                    const hidden = style === 'none';
+                    if (hidden !== state.cursorHidden) {
+                        state.cursorHidden = hidden;
+                        window.webkit.messageHandlers.gbEvents.postMessage(
+                            { type: 'cursorstyle', hidden: hidden });
+                    }
+                } catch (e) {}
             },
 
             down: function (x, y, button) {

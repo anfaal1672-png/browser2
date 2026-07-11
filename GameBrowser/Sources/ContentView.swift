@@ -25,7 +25,7 @@ struct ContentView: View {
 
                     if viewModel.cursorMode {
                         TrackpadView(viewModel: viewModel)
-                        if !viewModel.pointerLocked {
+                        if !viewModel.pointerLocked && !viewModel.pageHidesCursor {
                             CursorView(
                                 position: viewModel.cursorPosition,
                                 pressed: viewModel.dragLocked || viewModel.mouseButtonDown

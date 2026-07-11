@@ -63,6 +63,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet { releaseAllKeys() }   // avoid stuck keys when the layout swaps mid-press
     }
     @Published var pointerLocked: Bool = false
+    /// The page under the cursor uses `cursor: none` (draws its own cursor).
+    @Published var pageHidesCursor: Bool = false
     @Published var dragLocked: Bool = false
     /// True while the left mouse button is held; drives cursor press animation.
     @Published var mouseButtonDown: Bool = false
@@ -401,6 +403,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         activeTabIndex = index
         bindObservers(to: tabs[index].webView)
         pointerLocked = false
+        pageHidesCursor = false
         dragLocked = false
 
         // Silence background tabs (also suspends Web Audio); resume the active one.
@@ -474,6 +477,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
                         self?.urlText = url.scheme == "about" ? "" : url.absoluteString
                     }
                     self?.saveTabsDebounced()
+                    self?.pageHidesCursor = false   // reset on navigation
                 }
             },
             webView.observe(\.title) { [weak self] wv, _ in
@@ -721,6 +725,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
               let type = dict["type"] as? String else { return }
         if type == "pointerlock" {
             pointerLocked = (dict["locked"] as? Bool) ?? false
+        } else if type == "cursorstyle" {
+            pageHidesCursor = (dict["hidden"] as? Bool) ?? false
         }
     }
 }
