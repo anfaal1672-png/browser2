@@ -298,6 +298,12 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func snapshotActiveTab() {
         guard tabs.indices.contains(activeTabIndex) else { return }
         let tab = tabs[activeTabIndex]
+        // Don't capture a web view that isn't on screen yet (e.g. during
+        // launch restore) — it would overwrite the persisted thumbnail
+        // with a blank image.
+        guard tab.webView.superview != nil,
+              tab.webView.bounds.width > 0,
+              tab.webView.url != nil else { return }
         let config = WKSnapshotConfiguration()
         config.afterScreenUpdates = false
         tab.webView.takeSnapshot(with: config) { [weak self] image, _ in
