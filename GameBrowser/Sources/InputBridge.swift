@@ -287,9 +287,15 @@ enum InputBridge {
 
             key: function (type, key, code, keyCode, mods) {
                 mods = mods || {};
-                // Route keys to the frame the user last clicked in.
-                const kf = state.keyFrame;
-                if (kf && kf.isConnected) {
+                // Route keys to the frame the user last clicked in; before any
+                // click, fall back to the frame under the cursor so iframe
+                // games receive keys without needing a click first.
+                let kf = state.keyFrame;
+                if (!(kf && kf.isConnected)) {
+                    const hovered = targetAt(state.x, state.y);
+                    kf = isFrame(hovered) ? hovered : null;
+                }
+                if (kf) {
                     try {
                         kf.contentWindow.postMessage(
                             { __gbCall: 'key', args: [type, key, code, keyCode, mods] }, '*');
