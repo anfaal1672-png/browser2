@@ -59,7 +59,7 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            if !viewModel.immersive {
+            if viewModel.pcMode && !viewModel.immersive {
                 controlBar
             }
         }
@@ -67,6 +67,7 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.2), value: viewModel.keyboardVisible)
         .animation(.easeInOut(duration: 0.2), value: viewModel.fullKeyboard)
         .animation(.easeInOut(duration: 0.25), value: viewModel.immersive)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.pcMode)
         .sheet(isPresented: $showSettings) { settingsSheet }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
         .sheet(isPresented: $showTabs) { tabsSheet }
@@ -567,6 +568,18 @@ struct ContentView: View {
     private var settingsSheet: some View {
         NavigationStack {
             Form {
+                Section("ブラウザモード") {
+                    Picker("モード", selection: $viewModel.pcMode) {
+                        Text("スマホ").tag(false)
+                        Text("PC").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    Text(viewModel.pcMode
+                         ? "仮想マウス・キーボード付きのゲーミングブラウザ(PC版サイト表示)"
+                         : "通常のタッチ操作ブラウザ(下部バー非表示)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
                 Section("操作方法") {
                     Picker("スキーム", selection: $viewModel.controlScheme) {
                         ForEach(BrowserViewModel.ControlScheme.allCases, id: \.self) {

@@ -39,6 +39,25 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// App-level mode: phone = plain touch browser without the control bar,
+    /// PC = gaming browser with virtual mouse tools and desktop UA.
+    @Published var pcMode: Bool {
+        didSet {
+            UserDefaults.standard.set(pcMode, forKey: "pcMode")
+            if pcMode {
+                inputMode = .trackpad
+            } else {
+                inputMode = .touch
+                keyboardVisible = false
+                joystickVisible = false
+                imeActive = false
+                if dragLocked { toggleDragLock() }
+            }
+            // Match the site presentation to the mode (still overridable).
+            if desktopMode != pcMode { desktopMode = pcMode }
+        }
+    }
+
     @Published var inputMode: InputMode = .trackpad {
         didSet { applyKeyboardSuppression() }
     }
@@ -384,6 +403,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let defaults = UserDefaults.standard
         let savedSensitivity = defaults.double(forKey: "cursorSensitivity")
         cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
+        pcMode = defaults.bool(forKey: "pcMode")   // phone mode by default
         showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool ?? true
         joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
         hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool ?? true
@@ -395,7 +415,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
         webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
         keepAliveInBackground = defaults.bool(forKey: "keepAliveInBackground")
-        desktopMode = defaults.object(forKey: "desktopMode") as? Bool ?? true
+        desktopMode = defaults.object(forKey: "desktopMode") as? Bool
+            ?? defaults.bool(forKey: "pcMode")
         if let data = defaults.data(forKey: "history"),
            let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
             history = saved
@@ -426,6 +447,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
             .playback, mode: .default, options: [.mixWithOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
         if keepAliveInBackground { startSilence() }
+        inputMode = pcMode ? .trackpad : .touch
         restoreTabs()
 
         // Persist tabs when the app is backgrounded or killed by the system.
