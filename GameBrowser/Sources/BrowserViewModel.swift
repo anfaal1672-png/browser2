@@ -47,6 +47,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
     @Published var pointerLocked: Bool = false
     @Published var dragLocked: Bool = false
+    /// True while the left mouse button is held; drives cursor press animation.
+    @Published var mouseButtonDown: Bool = false
     @Published var pressedKeys: Set<InputBridge.Key> = []
     @Published var immersive: Bool = false
 
@@ -470,10 +472,12 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     func mouseDown(button: Int = 0) {
+        if button == 0 { mouseButtonDown = true }
         js("window.__gb && __gb.down(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(button))")
     }
 
     func mouseUp(button: Int = 0) {
+        if button == 0 { mouseButtonDown = false }
         let now = Date()
         let isDouble = button == 0
             && now.timeIntervalSince(lastClickTime) < 0.35

@@ -148,6 +148,8 @@ struct KeyButton: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color.white.opacity(0.25), lineWidth: 0.5)
             )
+            .scaleEffect(isActive ? 0.93 : 1.0)
+            .animation(.easeOut(duration: 0.08), value: isActive)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)

@@ -28,7 +28,7 @@ struct ContentView: View {
                         if !viewModel.pointerLocked {
                             CursorView(
                                 position: viewModel.cursorPosition,
-                                pressed: viewModel.dragLocked
+                                pressed: viewModel.dragLocked || viewModel.mouseButtonDown
                             )
                         }
                     }
@@ -121,30 +121,7 @@ struct ContentView: View {
             }
             .disabled(!viewModel.canGoForward)
 
-            HStack(spacing: 6) {
-                Image(systemName: viewModel.currentURL?.scheme == "https" ? "lock.fill" : "globe")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-
-                TextField("URLまたは検索語を入力", text: $viewModel.urlText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.webSearch)
-                    .submitLabel(.go)
-                    .focused($urlFieldFocused)
-                    .onSubmit {
-                        viewModel.submitURL()
-                        urlFieldFocused = false
-                    }
-                    .font(.system(size: 14))
-
-                if viewModel.isLoading {
-                    ProgressView().scaleEffect(0.6)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            urlBar
 
             Button(action: viewModel.isLoading ? { viewModel.webView.stopLoading() } : viewModel.reload) {
                 Image(systemName: viewModel.isLoading ? "xmark" : "arrow.clockwise")
@@ -217,6 +194,48 @@ struct ContentView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.ultraThinMaterial)
+    }
+
+    /// Compact URL bar: shows just the domain when idle; tap to edit the
+    /// full URL, like standard mobile browsers.
+    private var urlBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: viewModel.currentURL?.scheme == "https" ? "lock.fill" : "globe")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+
+            if urlFieldFocused {
+                TextField("URLまたは検索語を入力", text: $viewModel.urlText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.webSearch)
+                    .submitLabel(.go)
+                    .focused($urlFieldFocused)
+                    .onSubmit {
+                        viewModel.submitURL()
+                        urlFieldFocused = false
+                    }
+                    .font(.system(size: 14))
+            } else {
+                Text(viewModel.currentURL?.host ?? (viewModel.urlText.isEmpty ? "検索またはURLを入力" : viewModel.urlText))
+                    .font(.system(size: 14))
+                    .foregroundStyle(viewModel.currentURL == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { urlFieldFocused = true }
+            }
+
+            if viewModel.isLoading {
+                ProgressView().scaleEffect(0.6)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .frame(maxWidth: .infinity)
+        .background(Color.white.opacity(urlFieldFocused ? 0.16 : 0.10),
+                    in: RoundedRectangle(cornerRadius: 10))
+        .animation(.easeInOut(duration: 0.15), value: urlFieldFocused)
     }
 
     // MARK: - Find in page
@@ -304,13 +323,15 @@ struct ContentView: View {
 
     private var progressBar: some View {
         GeometryReader { geo in
-            Rectangle()
-                .fill(Color.cyan)
+            Capsule()
+                .fill(LinearGradient(colors: [.cyan, .blue],
+                                     startPoint: .leading, endPoint: .trailing))
                 .frame(width: geo.size.width * viewModel.progress)
                 .opacity(viewModel.isLoading ? 1 : 0)
                 .animation(.linear(duration: 0.15), value: viewModel.progress)
+                .animation(.easeOut(duration: 0.3), value: viewModel.isLoading)
         }
-        .frame(height: 2)
+        .frame(height: 2.5)
     }
 
     // MARK: - Bottom control bar
@@ -387,17 +408,27 @@ struct ContentView: View {
 
     private func controlButton(icon: String, label: String, active: Bool,
                                action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
             VStack(spacing: 3) {
                 Image(systemName: icon)
                     .font(.system(size: 17, weight: .medium))
+                    .frame(height: 20)
                 Text(label)
                     .font(.system(size: 9, weight: .medium))
             }
             .foregroundStyle(active ? Color.cyan : Color.white.opacity(0.85))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.cyan.opacity(active ? 0.14 : 0))
+                    .padding(.horizontal, 3)
+            )
         }
+        .animation(.easeInOut(duration: 0.15), value: active)
     }
 
     // MARK: - Tabs
@@ -597,6 +628,16 @@ struct TabCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = tab.urlString
+            } label: {
+                Label("リンクをコピー", systemImage: "doc.on.doc")
+            }
+            Button(role: .destructive, action: close) {
+                Label("タブを閉じる", systemImage: "xmark")
+            }
+        }
         .overlay(alignment: .topTrailing) {
             Button(action: close) {
                 Image(systemName: "xmark")
