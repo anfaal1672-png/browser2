@@ -105,12 +105,18 @@ struct ContentView: View {
         VStack(spacing: 8) {
             ScrollRepeatButton(
                 icon: "chevron.up",
-                onPress: { viewModel.startSmoothScroll(direction: -1) },
+                onPress: {
+                    viewModel.hapticSelection()
+                    viewModel.startSmoothScroll(direction: -1)
+                },
                 onRelease: { viewModel.endSmoothScroll() }
             )
             ScrollRepeatButton(
                 icon: "chevron.down",
-                onPress: { viewModel.startSmoothScroll(direction: 1) },
+                onPress: {
+                    viewModel.hapticSelection()
+                    viewModel.startSmoothScroll(direction: 1)
+                },
                 onRelease: { viewModel.endSmoothScroll() }
             )
         }
@@ -361,7 +367,6 @@ struct ContentView: View {
                 let all = BrowserViewModel.InputMode.allCases
                 let next = (viewModel.inputMode.rawValue + 1) % all.count
                 viewModel.inputMode = all[next]
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
 
             controlButton(
@@ -434,7 +439,7 @@ struct ContentView: View {
     private func controlButton(icon: String, label: String, active: Bool,
                                action: @escaping () -> Void) -> some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            viewModel.hapticLight()
             action()
         } label: {
             VStack(spacing: 3) {
@@ -593,6 +598,9 @@ struct ContentView: View {
                 Section("ジョイスティック") {
                     Toggle("矢印キーを送信(オフ: WASD)", isOn: $viewModel.joystickUsesArrows)
                 }
+                Section("フィードバック") {
+                    Toggle("触覚フィードバック(振動)", isOn: $viewModel.hapticsEnabled)
+                }
                 Section("表示") {
                     Toggle("PC版サイトを表示", isOn: $viewModel.desktopMode)
                     Toggle("スクロールボタンを表示", isOn: $viewModel.showScrollButtons)
@@ -722,7 +730,6 @@ struct ScrollRepeatButton: View {
                     .onChanged { _ in
                         guard !pressed else { return }
                         pressed = true
-                        UISelectionFeedbackGenerator().selectionChanged()
                         onPress()
                     }
                     .onEnded { _ in

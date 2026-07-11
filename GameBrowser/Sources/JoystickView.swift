@@ -10,7 +10,10 @@ struct JoystickView: View {
 
     private let radius: CGFloat = 58
     private let knobRadius: CGFloat = 26
-    private let threshold: CGFloat = 0.34
+    // Hysteresis: a direction engages above `pressThreshold` and only
+    // releases below `releaseThreshold`, so keys don't flicker at the edge.
+    private let pressThreshold: CGFloat = 0.42
+    private let releaseThreshold: CGFloat = 0.26
 
     var body: some View {
         ZStack {
@@ -36,8 +39,11 @@ struct JoystickView: View {
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
-                    let dx = value.translation.width
-                    let dy = value.translation.height
+                    // Vector from the stick center to the finger — using the
+                    // absolute location (not the drag translation) so the stick
+                    // tracks the thumb correctly wherever the touch started.
+                    let dx = value.location.x - radius
+                    let dy = value.location.y - radius
                     let len = max(hypot(dx, dy), 0.001)
                     let clamped = min(len, radius - knobRadius / 2)
                     offset = CGSize(width: dx / len * clamped, height: dy / len * clamped)
@@ -63,16 +69,22 @@ struct JoystickView: View {
     private func updateKeys(x: CGFloat, y: CGFloat) {
         let keys = keySet
         var wanted: Set<InputBridge.Key> = []
-        if y < -threshold { wanted.insert(keys.up) }
-        if y > threshold { wanted.insert(keys.down) }
-        if x < -threshold { wanted.insert(keys.left) }
-        if x > threshold { wanted.insert(keys.right) }
 
-        for key in heldKeys.subtracting(wanted) { viewModel.keyUp(key) }
-        for key in wanted.subtracting(heldKeys) {
-            viewModel.keyDown(key)
-            UISelectionFeedbackGenerator().selectionChanged()
+        // Per-axis hysteresis: engaged directions stay on until the stick
+        // returns well past the release threshold.
+        func axis(_ value: CGFloat, negative: InputBridge.Key, positive: InputBridge.Key) {
+            let negHeld = heldKeys.contains(negative)
+            let posHeld = heldKeys.contains(positive)
+            if value < -(negHeld ? releaseThreshold : pressThreshold) { wanted.insert(negative) }
+            if value > (posHeld ? releaseThreshold : pressThreshold) { wanted.insert(positive) }
         }
+        axis(y, negative: keys.up, positive: keys.down)
+        axis(x, negative: keys.left, positive: keys.right)
+
+        guard wanted != heldKeys else { return }
+        for key in heldKeys.subtracting(wanted) { viewModel.keyUp(key) }
+        for key in wanted.subtracting(heldKeys) { viewModel.keyDown(key) }
         heldKeys = wanted
+        viewModel.hapticSelection()
     }
 }

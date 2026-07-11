@@ -75,6 +75,26 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet { UserDefaults.standard.set(joystickUsesArrows, forKey: "joystickUsesArrows") }
     }
 
+    @Published var hapticsEnabled: Bool {
+        didSet { UserDefaults.standard.set(hapticsEnabled, forKey: "hapticsEnabled") }
+    }
+
+    // Centralized haptics so the toggle applies everywhere.
+    func hapticLight() {
+        guard hapticsEnabled else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    func hapticMedium() {
+        guard hapticsEnabled else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    func hapticSelection() {
+        guard hapticsEnabled else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+    }
+
     private var gamepad: GamepadController?
     @Published var pressedKeys: Set<InputBridge.Key> = []
     @Published var immersive: Bool = false
@@ -209,6 +229,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
         showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool ?? true
         joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
+        hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool ?? true
         controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme")) ?? .classic
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool ?? true
         if let data = defaults.data(forKey: "history"),
@@ -672,7 +693,12 @@ final class BrowserViewModel: NSObject, ObservableObject {
         keyUp(key)
     }
 
-    private func sendKey(type: String, _ key: InputBridge.Key) {
+    /// OS-style key auto-repeat: keydown with repeat=true while held.
+    func repeatKey(_ key: InputBridge.Key) {
+        sendKey(type: "keydown", key, repeating: true)
+    }
+
+    private func sendKey(type: String, _ key: InputBridge.Key, repeating: Bool = false) {
         let shift = pressedKeys.contains(InputBridge.shift)
         let ctrl = pressedKeys.contains(InputBridge.ctrl)
         let alt = pressedKeys.contains(InputBridge.alt)
@@ -685,7 +711,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
             .replacingOccurrences(of: "'", with: "\\'")
         js("""
         window.__gb && __gb.key('\(type)', '\(escaped)', '\(key.code)', \(key.keyCode), \
-        {shift:\(shift), ctrl:\(ctrl), alt:\(alt)})
+        {shift:\(shift), ctrl:\(ctrl), alt:\(alt), repeat:\(repeating)})
         """)
     }
 

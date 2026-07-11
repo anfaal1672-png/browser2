@@ -72,7 +72,7 @@ final class TrackpadUIView: UIView {
                hypot(p.x - lastTapEndPoint.x, p.y - lastTapEndPoint.y) < 60,
                let viewModel {
                 isDragging = true
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                viewModel.hapticMedium()
                 viewModel.mouseDown()
                 return
             }
@@ -163,11 +163,11 @@ final class TrackpadUIView: UIView {
             else { return }
             if self.isQuick {
                 // Quick scheme: long-press = right click (drag uses tap-and-a-half).
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                viewModel.hapticMedium()
                 viewModel.click(button: 2)
             } else {
                 self.isDragging = true
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                viewModel.hapticMedium()
                 viewModel.mouseDown()
             }
         }

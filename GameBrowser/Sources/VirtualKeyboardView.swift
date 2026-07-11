@@ -129,6 +129,7 @@ struct KeyButton: View {
     var flexible: Bool = false
 
     @State private var touchDown = false
+    @State private var repeatTimer: Timer?
 
     private var isActive: Bool {
         touchDown || (sticky && viewModel.pressedKeys.contains(key))
@@ -156,7 +157,7 @@ struct KeyButton: View {
                     .onChanged { _ in
                         guard !touchDown else { return }
                         touchDown = true
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        viewModel.hapticLight()
                         if sticky {
                             if viewModel.pressedKeys.contains(key) {
                                 viewModel.keyUp(key)
@@ -165,10 +166,23 @@ struct KeyButton: View {
                             }
                         } else {
                             viewModel.keyDown(key)
+                            // OS-style auto-repeat after an initial delay.
+                            let vm = viewModel
+                            let k = key
+                            repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { _ in
+                                Task { @MainActor in
+                                    guard vm.pressedKeys.contains(k) else { return }
+                                    self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.07, repeats: true) { _ in
+                                        Task { @MainActor in vm.repeatKey(k) }
+                                    }
+                                }
+                            }
                         }
                     }
                     .onEnded { _ in
                         touchDown = false
+                        repeatTimer?.invalidate()
+                        repeatTimer = nil
                         if !sticky { viewModel.keyUp(key) }
                     }
             )
