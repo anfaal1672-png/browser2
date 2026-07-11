@@ -114,8 +114,8 @@ enum RomajiConverter {
 /// (same backend as Google Japanese Input's cloud conversion).
 enum KanjiConverter {
 
-    /// Returns conversion candidates for the given hiragana string.
-    static func candidates(for kana: String) async -> [String] {
+    /// One API request: returns per-segment candidate lists (with segment kana).
+    private static func query(_ kana: String) async -> [(kana: String, candidates: [String])] {
         guard !kana.isEmpty,
               let encoded = kana.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string:
@@ -127,10 +127,47 @@ enum KanjiConverter {
         else { return [] }
 
         // Response: [[segmentKana, [candidate, ...]], ...]
-        let segments: [[String]] = json.compactMap { seg in
-            guard seg.count >= 2, let cands = seg[1] as? [String] else { return nil }
-            return cands
+        return json.compactMap { seg in
+            guard seg.count >= 2,
+                  let segKana = seg[0] as? String,
+                  let cands = seg[1] as? [String] else { return nil }
+            // Segment kana comes back with a trailing comma marker sometimes.
+            return (segKana.replacingOccurrences(of: ",", with: ""), cands)
         }
+    }
+
+    /// Returns conversion candidates for the given hiragana string. The API
+    /// caps each response at ~5 per segment with no paging, so each segment is
+    /// also re-queried individually in parallel — standalone queries return a
+    /// different (often richer) candidate set — and everything is merged.
+    static func candidates(for kana: String) async -> [String] {
+        let initial = await query(kana)
+        guard !initial.isEmpty else { return [] }
+
+        var segments = initial.map(\.candidates)
+
+        // Per-segment re-query for extra candidates (only useful for phrases).
+        if initial.count > 1 {
+            let extras = await withTaskGroup(of: (Int, [String]).self) { group in
+                for (i, seg) in initial.enumerated() {
+                    group.addTask {
+                        let result = await query(seg.kana)
+                        // A standalone query may itself split; only merge when
+                        // it stays a single segment.
+                        return (i, result.count == 1 ? result[0].candidates : [])
+                    }
+                }
+                var collected: [(Int, [String])] = []
+                for await item in group { collected.append(item) }
+                return collected
+            }
+            for (i, extraCandidates) in extras {
+                var seen = Set(segments[i])
+                segments[i] += extraCandidates.filter { seen.insert($0).inserted }
+            }
+        }
+
+        segments = segments.filter { !$0.isEmpty }
         guard !segments.isEmpty else { return [] }
 
         var results: [String] = []
