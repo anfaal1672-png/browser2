@@ -154,6 +154,51 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     private let locationManager = CLLocationManager()
 
+    // MARK: - Background keep-alive (silent audio)
+
+    /// Plays looping silence so iOS never suspends the app: pages keep
+    /// running (timers, sockets, our Notification bridge) in the background.
+    /// Costs battery, so it's opt-in.
+    @Published var keepAliveInBackground: Bool {
+        didSet {
+            UserDefaults.standard.set(keepAliveInBackground, forKey: "keepAliveInBackground")
+            keepAliveInBackground ? startSilence() : stopSilence()
+        }
+    }
+
+    private var silenceEngine: AVAudioEngine?
+
+    private func startSilence() {
+        guard silenceEngine == nil else { return }
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
+        engine.connect(player, to: engine.mainMixerNode, format: format)
+        engine.mainMixerNode.outputVolume = 0
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 44100) else { return }
+        buffer.frameLength = 44100   // one second of silence, looped
+
+        do {
+            try AVAudioSession.sharedInstance().setCategory(
+                .playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            try engine.start()
+            player.scheduleBuffer(buffer, at: nil, options: .loops)
+            player.play()
+            silenceEngine = engine
+        } catch {
+            engine.stop()
+        }
+    }
+
+    private func stopSilence() {
+        silenceEngine?.stop()
+        silenceEngine = nil
+    }
+
     /// Allow sites to post iOS notifications via the bridged Notification API.
     @Published var webNotificationsEnabled: Bool {
         didSet { UserDefaults.standard.set(webNotificationsEnabled, forKey: "webNotificationsEnabled") }
@@ -349,6 +394,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool ?? true
         capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
         webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
+        keepAliveInBackground = defaults.bool(forKey: "keepAliveInBackground")
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool ?? true
         if let data = defaults.data(forKey: "history"),
            let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
@@ -376,8 +422,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         // Playback session + the "audio" background mode keep pages alive in
         // the background while they are producing sound (game music, calls).
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+        try? AVAudioSession.sharedInstance().setCategory(
+            .playback, mode: .default, options: [.mixWithOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
+        if keepAliveInBackground { startSilence() }
         restoreTabs()
 
         // Persist tabs when the app is backgrounded or killed by the system.

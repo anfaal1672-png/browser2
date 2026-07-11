@@ -598,6 +598,12 @@ struct ContentView: View {
                 Section("ジョイスティック") {
                     Toggle("矢印キーを送信(オフ: WASD)", isOn: $viewModel.joystickUsesArrows)
                 }
+                Section("バックグラウンド") {
+                    Toggle("バックグラウンドで実行を継続", isOn: $viewModel.keepAliveInBackground)
+                    Text("無音のオーディオを再生し続けることで、アプリを閉じてもページが動き続けます(通知の受信など)。バッテリー消費が増えます。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
                 Section("フィードバック") {
                     Toggle("触覚フィードバック(振動)", isOn: $viewModel.hapticsEnabled)
                 }
