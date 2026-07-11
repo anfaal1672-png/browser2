@@ -710,7 +710,13 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// While true, virtual keyboard letters feed the romaji buffer instead of
     /// sending key events to the page.
     @Published var imeActive: Bool = false {
-        didSet { if !imeActive { imeClear() } }
+        didSet {
+            // Closing the IME mid-composition leaves the typed text committed.
+            if !imeActive {
+                if !imeComposition.isEmpty { setComposition(imeComposition, commit: true) }
+                imeClear()
+            }
+        }
     }
     @Published var imeKana: String = ""
     @Published var imePending: String = ""
@@ -748,15 +754,26 @@ final class BrowserViewModel: NSObject, ObservableObject {
         if imeComposition.isEmpty {
             tapKey(InputBridge.enter)
         } else {
-            insertText(imeComposition)
+            setComposition(imeComposition, commit: true)
             imeClear()
         }
     }
 
     func imeSelectCandidate(_ candidate: String) {
-        insertText(candidate)
+        setComposition(candidate, commit: true)
         imeClear()
         hapticLight()
+    }
+
+    /// Mirror the composition into the page's focused field (inline editing).
+    private func setComposition(_ text: String, commit: Bool = false) {
+        js("window.__gb && __gb.setComposition('\(jsEscape(text))', \(commit))")
+    }
+
+    private func jsEscape(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+            .replacingOccurrences(of: "\n", with: "\\n")
     }
 
     private func imeClear() {
@@ -771,6 +788,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let (kana, pending) = RomajiConverter.convert(romajiBuffer)
         imeKana = kana
         imePending = pending
+        setComposition(imeComposition)   // typed text appears in the field itself
         fetchCandidates(debounced: true)
     }
 

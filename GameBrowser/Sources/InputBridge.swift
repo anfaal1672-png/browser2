@@ -20,6 +20,7 @@ enum InputBridge {
             dnd: null,        // in-progress emulated HTML5 drag-and-drop
             cursorHidden: false,   // page is showing its own cursor (cursor: none)
             suppressKeyboard: false,   // cursor mode: don't pop the OS keyboard on focus
+            compLen: 0,   // length of the in-field IME composition being edited
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
@@ -357,6 +358,43 @@ enum InputBridge {
                             el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
                         }
                     }
+                }
+            },
+
+            // Live IME composition: replaces the previous uncommitted text in
+            // the focused field with `text` (typed inline, like a real IME).
+            // `commit` finalizes it. Forwards into iframes as needed.
+            setComposition: function (text, commit) {
+                let kf = state.keyFrame;
+                if (!(kf && kf.isConnected)) {
+                    const hovered = targetAt(state.x, state.y);
+                    kf = isFrame(hovered) ? hovered : null;
+                }
+                if (kf) {
+                    try {
+                        kf.contentWindow.postMessage(
+                            { __gbCall: 'setComposition', args: [text, commit] }, '*');
+                        return;
+                    } catch (e) {}
+                }
+                const el = document.activeElement;
+                if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                    let end = el.selectionEnd;
+                    if (end === null || end === undefined) { end = el.value.length; }
+                    const start = Math.max(0, end - (state.compLen || 0));
+                    el.setRangeText(text, start, end, 'end');
+                    el.dispatchEvent(new InputEvent('input', {
+                        bubbles: true, data: text, inputType: 'insertText',
+                    }));
+                    state.compLen = commit ? 0 : text.length;
+                    if (commit) { el.dispatchEvent(new Event('change', { bubbles: true })); }
+                } else if (el && el.isContentEditable) {
+                    const sel = window.getSelection();
+                    for (let i = 0; i < (state.compLen || 0); i++) {
+                        sel.modify('extend', 'backward', 'character');
+                    }
+                    document.execCommand('insertText', false, text);
+                    state.compLen = commit ? 0 : text.length;
                 }
             },
 
