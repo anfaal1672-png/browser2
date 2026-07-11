@@ -1087,14 +1087,42 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
                              createWebViewWith configuration: WKWebViewConfiguration,
                              for navigationAction: WKNavigationAction,
                              windowFeatures: WKWindowFeatures) -> WKWebView? {
-        // Open popups in a new tab (unless the popup blocker is on).
-        if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
-            Task { @MainActor [weak self] in
-                guard let self, !self.blockPopups else { return }
-                self.newTab(url: url)
+        // window.open / target=_blank: create the new tab's web view from the
+        // provided configuration and hand it back, so the page receives a real
+        // window reference and WebKit performs the load itself.
+        MainActor.assumeIsolated {
+            guard !blockPopups else { return nil }
+            return addPopupTab(configuration: configuration)
+        }
+    }
+
+    /// New tab backed by a WebKit-provided popup configuration.
+    private func addPopupTab(configuration: WKWebViewConfiguration) -> WKWebView {
+        // The parent's user scripts and message handlers are inherited via the
+        // configuration, so don't add them again.
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
+        webView.allowsBackForwardNavigationGestures = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.isOpaque = false
+        webView.backgroundColor = .black
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+
+        let tab = Tab(webView: webView)
+        tabs.append(tab)
+        selectTab(tabs.count - 1)
+        saveTabs()
+        return webView
+    }
+
+    /// window.close() on a script-opened tab.
+    nonisolated func webViewDidClose(_ webView: WKWebView) {
+        MainActor.assumeIsolated {
+            if let index = tabs.firstIndex(where: { $0.webView === webView }) {
+                closeTab(index)
             }
         }
-        return nil
     }
 
     nonisolated func webView(_ webView: WKWebView,

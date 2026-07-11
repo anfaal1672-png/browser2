@@ -122,8 +122,13 @@ enum InputBridge {
             const origHas = proto.hasPointerCapture;
             proto.setPointerCapture = function (id) {
                 if (id === 1) {
-                    state.captured = this;
-                    try { origSet.call(this, id); } catch (e) {}
+                    // Per spec, capture only takes effect while a button is
+                    // held; speculative calls (e.g. at load) must be no-ops,
+                    // otherwise every event gets pinned to this element.
+                    if (state.buttons) {
+                        state.captured = this;
+                        try { origSet.call(this, id); } catch (e) {}
+                    }
                     return;
                 }
                 return origSet.call(this, id);
@@ -308,6 +313,11 @@ enum InputBridge {
 
             key: function (type, key, code, keyCode, mods) {
                 mods = mods || {};
+                // Real browsers release pointer lock on a native ESC press;
+                // synthetic events don't, so do it explicitly.
+                if (type === 'keydown' && key === 'Escape' && document.pointerLockElement) {
+                    try { document.exitPointerLock(); } catch (e) {}
+                }
                 // Route keys to the frame the user last clicked in; before any
                 // click, fall back to the frame under the cursor so iframe
                 // games receive keys without needing a click first.
