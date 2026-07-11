@@ -9,12 +9,13 @@ struct CursorView: View {
 
     private enum Shape {
         case arrow                    // default / auto
+        case pointerHand              // hotspot at the fingertip
         case symbol(String, rotation: Double = 0)   // centered SF Symbol
     }
 
     private var shape: Shape {
         switch style {
-        case "pointer":                 return .symbol("hand.point.up.left.fill")
+        case "pointer":                 return .pointerHand
         case "text", "vertical-text":   return .symbol("text.cursor")
         case "wait", "progress":        return .symbol("hourglass")
         case "crosshair", "cell":       return .symbol("plus")
@@ -52,6 +53,17 @@ struct CursorView: View {
                     .shadow(color: .black.opacity(0.45), radius: 2, x: 1, y: 1)
                     // The arrow's hotspot is its top-left tip.
                     .position(x: position.x + 11, y: position.y + 11)
+
+            case .pointerHand:
+                // The hand's hotspot is the tip of the extended finger
+                // (upper-left of the glyph), like the Windows link cursor.
+                Image(systemName: "hand.point.up.left.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .scaleEffect(pressed ? 0.85 : 1.0, anchor: .topLeading)
+                    .shadow(color: .black.opacity(0.8), radius: 1.5)
+                    .shadow(color: .black.opacity(0.5), radius: 3)
+                    .position(x: position.x + 7, y: position.y + 10)
 
             case .symbol(let name, let rotation):
                 Image(systemName: name)
