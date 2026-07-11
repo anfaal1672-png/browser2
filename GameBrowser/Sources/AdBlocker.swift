@@ -128,8 +128,7 @@ enum AdBlocker {
 
         let store = WKContentRuleListStore.default()
         if fresh,
-           let cached = try? await store?.contentRuleList(forIdentifier: fullIdentifier),
-           let cached {
+           let cached = try? await store?.contentRuleList(forIdentifier: fullIdentifier) {
             return cached
         }
 
