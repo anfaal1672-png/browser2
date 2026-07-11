@@ -185,6 +185,74 @@ enum InputBridge {
             }
         }
 
+        // Synthetic clicks don't trigger WebKit's native caret placement, so
+        // compute the character index from the click point ourselves.
+        function placeCaret(el, clientX, clientY) {
+            try {
+                if (el.isContentEditable) {
+                    const range = document.caretRangeFromPoint(clientX, clientY);
+                    if (range) {
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    }
+                    return;
+                }
+                if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') { return; }
+
+                const style = getComputedStyle(el);
+                const canvas = state.measureCanvas ||
+                    (state.measureCanvas = document.createElement('canvas'));
+                const ctx = canvas.getContext('2d');
+                ctx.font = style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily;
+
+                const rect = el.getBoundingClientRect();
+                const x = clientX - rect.left - parseFloat(style.paddingLeft || 0)
+                    - parseFloat(style.borderLeftWidth || 0) + el.scrollLeft;
+
+                let text = el.value;
+                let lineStart = 0;
+                if (el.tagName === 'TEXTAREA') {
+                    // Approximate row from the click Y (ignores soft wrapping).
+                    let lineHeight = parseFloat(style.lineHeight);
+                    if (!lineHeight || isNaN(lineHeight)) {
+                        lineHeight = parseFloat(style.fontSize) * 1.2;
+                    }
+                    const y = clientY - rect.top - parseFloat(style.paddingTop || 0)
+                        - parseFloat(style.borderTopWidth || 0) + el.scrollTop;
+                    const lines = el.value.split('\n');
+                    const row = Math.max(0, Math.min(lines.length - 1, Math.floor(y / lineHeight)));
+                    for (let r = 0; r < row; r++) { lineStart += lines[r].length + 1; }
+                    text = lines[row];
+                }
+
+                // Nearest character boundary to the click X.
+                let best = 0, bestDist = Infinity;
+                for (let i = 0; i <= text.length; i++) {
+                    const dist = Math.abs(ctx.measureText(text.slice(0, i)).width - x);
+                    if (dist < bestDist) { bestDist = dist; best = i; }
+                }
+                el.setSelectionRange(lineStart + best, lineStart + best);
+            } catch (e) {}
+        }
+
+        // Synthetic arrow keys don't move the caret natively either.
+        function moveCaret(el, key, shift) {
+            const len = el.value.length;
+            let start = el.selectionStart, end = el.selectionEnd;
+            if (start === null) { return; }
+            const delta = (key === 'ArrowLeft') ? -1 : 1;
+            if (shift) {
+                el.setSelectionRange(start, Math.max(start, Math.min(len, end + delta)));
+            } else if (start !== end) {
+                const pos = delta < 0 ? start : end;
+                el.setSelectionRange(pos, pos);
+            } else {
+                const pos = Math.max(0, Math.min(len, start + delta));
+                el.setSelectionRange(pos, pos);
+            }
+        }
+
         const bridge = {
             move: function (x, y, dx, dy) {
                 const p = toPage(x, y); x = p.x; y = p.y;
@@ -248,6 +316,7 @@ enum InputBridge {
                             target.setAttribute('data-gb-imode', '1');
                         }
                         target.focus({ preventScroll: true });
+                        placeCaret(target, x, y);
                     }
                 }
             },
@@ -355,6 +424,13 @@ enum InputBridge {
                         }
                     } else if (el && el.isContentEditable) {
                         document.execCommand('insertText', false, key);
+                    }
+                }
+                if (type === 'keydown' && notCancelled &&
+                    (key === 'ArrowLeft' || key === 'ArrowRight')) {
+                    const el = document.activeElement;
+                    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                        moveCaret(el, key, !!mods.shift);
                     }
                 }
                 if (type === 'keydown' && notCancelled && key === 'Backspace') {
