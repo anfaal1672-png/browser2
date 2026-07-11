@@ -8,7 +8,6 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var isLocked = UserDefaults.standard.bool(forKey: "appLockEnabled")
     @State private var unlocking = false
-    @AppStorage("appTheme") private var appTheme = 0   // 0 dark, 1 light, 2 system
     @State private var showBookmarks = false
     @State private var showTabs = false
     @State private var showHistory = false
@@ -95,7 +94,6 @@ struct ContentView: View {
             }
         }
         .onAppear { if isLocked { unlock() } }
-        .preferredColorScheme(appTheme == 0 ? .dark : appTheme == 1 ? .light : nil)
         .sheet(isPresented: $showSettings) { SettingsView(viewModel: viewModel) }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
         .sheet(isPresented: $showTabs) { tabsSheet }
