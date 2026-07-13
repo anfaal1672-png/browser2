@@ -33,8 +33,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
         var label: String {
             switch self {
-            case .trackpad: return "マウス"
-            case .touch: return "タッチ"
+            case .trackpad: return loc("マウス", "Mouse")
+            case .touch: return loc("タッチ", "Touch")
             }
         }
     }
@@ -78,8 +78,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         var label: String {
             switch self {
-            case .classic: return "従来"
-            case .quick: return "クイック"
+            case .classic: return loc("従来", "Classic")
+            case .quick: return loc("クイック", "Quick")
             }
         }
     }
@@ -310,8 +310,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         var label: String {
             switch self {
-            case .home: return "ホーム(Google)"
-            case .startPage: return "スタートページ"
+            case .home: return loc("ホーム(Google)", "Home (Google)")
+            case .startPage: return loc("スタートページ", "Start page")
             }
         }
     }
@@ -435,9 +435,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
         case ask, allow, deny
         var label: String {
             switch self {
-            case .ask: return "毎回確認"
-            case .allow: return "許可"
-            case .deny: return "拒否"
+            case .ask: return loc("毎回確認", "Ask")
+            case .allow: return loc("許可", "Allow")
+            case .deny: return loc("拒否", "Deny")
             }
         }
     }
@@ -587,6 +587,41 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet { UserDefaults.standard.set(showScrollButtons, forKey: "showScrollButtons") }
     }
 
+    /// UI language: 0 = system, 1 = Japanese, 2 = English.
+    @Published var appLanguage: Int {
+        didSet {
+            UserDefaults.standard.set(appLanguage, forKey: "appLanguage")
+            L.setting = appLanguage
+        }
+    }
+
+    /// Show the URL/toolbar at the bottom of the screen instead of the top.
+    @Published var toolbarOnBottom: Bool {
+        didSet { UserDefaults.standard.set(toolbarOnBottom, forKey: "toolbarOnBottom") }
+    }
+
+    /// Translate the current page via Google Translate's proxy
+    /// (host.translate.goog) — works without any API key.
+    func translatePage() {
+        guard let url = currentURL, let host = url.host, !host.hasSuffix(".translate.goog"),
+              var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        comps.scheme = "https"
+        comps.host = host
+            .replacingOccurrences(of: "-", with: "--")
+            .replacingOccurrences(of: ".", with: "-") + ".translate.goog"
+        let target = L.translationTarget
+        var items = comps.queryItems ?? []
+        items.append(contentsOf: [
+            URLQueryItem(name: "_x_tr_sl", value: "auto"),
+            URLQueryItem(name: "_x_tr_tl", value: target),
+            URLQueryItem(name: "_x_tr_hl", value: target),
+        ])
+        comps.queryItems = items
+        if let translated = comps.url {
+            webView.load(URLRequest(url: translated))
+        }
+    }
+
     /// Desktop (PC) or mobile presentation: user agent + content mode.
     @Published var desktopMode: Bool {
         didSet {
@@ -680,6 +715,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
         pcMode = defaults.bool(forKey: "pcMode")   // phone mode by default
         showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool ?? true
+        appLanguage = defaults.integer(forKey: "appLanguage")
+        toolbarOnBottom = defaults.bool(forKey: "toolbarOnBottom")
         joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
         hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool ?? true
         controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme")) ?? .classic

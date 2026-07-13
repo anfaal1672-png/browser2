@@ -157,9 +157,9 @@ enum TrackerBlocker {
 
         var label: String {
             switch self {
-            case .off: return "オフ"
-            case .balanced: return "バランス"
-            case .strict: return "厳重"
+            case .off: return loc("オフ", "Off")
+            case .balanced: return loc("バランス", "Balanced")
+            case .strict: return loc("厳重", "Strict")
             }
         }
     }

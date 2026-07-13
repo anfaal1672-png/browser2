@@ -22,6 +22,7 @@
 		AA0000012000000E000000AA /* AdBlocker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000011000000E000000AA /* AdBlocker.swift */; };
 		AA0000012000000F000000AA /* AutofillStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000011000000F000000AA /* AutofillStore.swift */; };
 		AA00000120000010000000AA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000010000000AA /* SettingsView.swift */; };
+		AA00000120000011000000AA /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000011000000AA /* Localization.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +43,7 @@
 		AA0000011000000E000000AA /* AdBlocker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdBlocker.swift; sourceTree = "<group>"; };
 		AA0000011000000F000000AA /* AutofillStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutofillStore.swift; sourceTree = "<group>"; };
 		AA00000110000010000000AA /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		AA00000110000011000000AA /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +92,7 @@
 				AA0000011000000E000000AA /* AdBlocker.swift */,
 				AA0000011000000F000000AA /* AutofillStore.swift */,
 				AA00000110000010000000AA /* SettingsView.swift */,
+				AA00000110000011000000AA /* Localization.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -185,6 +188,7 @@
 				AA0000012000000E000000AA /* AdBlocker.swift in Sources */,
 				AA0000012000000F000000AA /* AutofillStore.swift in Sources */,
 				AA00000120000010000000AA /* SettingsView.swift in Sources */,
+				AA00000120000011000000AA /* Localization.swift in Sources */,
 				AA0000012000000B000000AA /* JoystickView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

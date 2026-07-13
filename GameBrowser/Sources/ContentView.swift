@@ -17,7 +17,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !viewModel.immersive {
+            if !viewModel.immersive && !viewModel.toolbarOnBottom {
                 toolbar
                 progressBar
                 if showFindBar { findBar }
@@ -74,6 +74,12 @@ struct ContentView: View {
             if viewModel.pcMode && !viewModel.immersive {
                 controlBar
             }
+
+            if !viewModel.immersive && viewModel.toolbarOnBottom {
+                if showFindBar { findBar }
+                progressBar
+                toolbar
+            }
         }
         .background(Color.black.ignoresSafeArea())
         .animation(.easeInOut(duration: 0.2), value: viewModel.keyboardVisible)
@@ -108,9 +114,9 @@ struct ContentView: View {
             VStack(spacing: 16) {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 40))
-                Text("GameBrowserはロックされています")
+                Text(loc("GameBrowserはロックされています", "GameBrowser is locked"))
                     .font(.system(size: 15, weight: .medium))
-                Button("ロック解除") { unlock() }
+                Button(loc("ロック解除", "Unlock")) { unlock() }
                     .buttonStyle(.borderedProminent)
             }
             .foregroundStyle(.primary)
@@ -129,7 +135,7 @@ struct ContentView: View {
             return
         }
         context.evaluatePolicy(.deviceOwnerAuthentication,
-                               localizedReason: "GameBrowserのロックを解除") { success, _ in
+                               localizedReason: loc("GameBrowserのロックを解除", "Unlock GameBrowser")) { success, _ in
             Task { @MainActor in
                 if success { isLocked = false }
                 unlocking = false
@@ -228,42 +234,46 @@ struct ContentView: View {
             Menu {
                 if let url = viewModel.currentURL {
                     ShareLink(item: url) {
-                        Label("共有", systemImage: "square.and.arrow.up")
+                        Label(loc("共有", "Share"), systemImage: "square.and.arrow.up")
                     }
                     Button {
                         UIPasteboard.general.string = url.absoluteString
                     } label: {
-                        Label("リンクをコピー", systemImage: "doc.on.doc")
+                        Label(loc("リンクをコピー", "Copy link"), systemImage: "doc.on.doc")
                     }
                 }
                 Button {
                     showFindBar = true
                     findFieldFocused = true
                 } label: {
-                    Label("ページ内検索", systemImage: "magnifyingglass")
+                    Label(loc("ページ内検索", "Find in page"), systemImage: "magnifyingglass")
                 }
                 Button { showHistory = true } label: {
-                    Label("履歴", systemImage: "clock")
+                    Label(loc("履歴", "History"), systemImage: "clock")
                 }
+                Button { viewModel.translatePage() } label: {
+                    Label(loc("ページを翻訳", "Translate page"), systemImage: "character.bubble")
+                }
+                .disabled(viewModel.currentURL == nil)
                 Divider()
                 Button {
                     viewModel.desktopMode.toggle()
                 } label: {
-                    Label(viewModel.desktopMode ? "モバイル版サイトを表示" : "PC版サイトを表示",
+                    Label(viewModel.desktopMode ? loc("モバイル版サイトを表示", "Show mobile site") : loc("PC版サイトを表示", "Show desktop site"),
                           systemImage: viewModel.desktopMode ? "iphone" : "desktopcomputer")
                 }
                 Button {
                     viewModel.showScrollButtons.toggle()
                 } label: {
-                    Label(viewModel.showScrollButtons ? "スクロールボタンを隠す" : "スクロールボタンを表示",
+                    Label(viewModel.showScrollButtons ? loc("スクロールボタンを隠す", "Hide scroll buttons") : loc("スクロールボタンを表示", "Show scroll buttons"),
                           systemImage: "chevron.up.chevron.down")
                 }
                 Button { viewModel.goHome() } label: {
-                    Label("ホーム", systemImage: "house")
+                    Label(loc("ホーム", "Home"), systemImage: "house")
                 }
                 Divider()
                 Button { showSettings = true } label: {
-                    Label("設定", systemImage: "gearshape")
+                    Label(loc("設定", "Settings"), systemImage: "gearshape")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -287,7 +297,7 @@ struct ContentView: View {
             // The text field stays in the hierarchy at all times — focusing a
             // field that isn't rendered yet silently fails. When idle it is
             // invisible and the domain label is shown on top.
-            TextField("URLまたは検索語を入力", text: $viewModel.urlText)
+            TextField(loc("URLまたは検索語を入力", "Enter URL or search"), text: $viewModel.urlText)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.webSearch)
@@ -301,7 +311,7 @@ struct ContentView: View {
                 .opacity(urlFieldFocused ? 1 : 0)
                 .overlay {
                     if !urlFieldFocused {
-                        Text(viewModel.currentURL?.host ?? (viewModel.urlText.isEmpty ? "検索またはURLを入力" : viewModel.urlText))
+                        Text(viewModel.currentURL?.host ?? (viewModel.urlText.isEmpty ? loc("検索またはURLを入力", "Search or enter URL") : viewModel.urlText))
                             .font(.system(size: 14))
                             .foregroundStyle(viewModel.currentURL == nil ? .secondary : .primary)
                             .lineLimit(1)
@@ -330,12 +340,12 @@ struct ContentView: View {
             Image(systemName: "key.fill")
                 .font(.system(size: 13))
                 .foregroundStyle(.cyan)
-            Text("パスワードを保存しますか?")
+            Text(loc("パスワードを保存しますか?", "Save this password?"))
                 .font(.system(size: 13, weight: .medium))
             Spacer()
-            Button("保存") { viewModel.savePendingCredential() }
+            Button(loc("保存", "Save")) { viewModel.savePendingCredential() }
                 .font(.system(size: 13, weight: .semibold))
-            Button("しない") { viewModel.pendingCredential = nil }
+            Button(loc("しない", "Never")) { viewModel.pendingCredential = nil }
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
         }
@@ -395,7 +405,7 @@ struct ContentView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            TextField("ページ内を検索", text: $findQuery)
+            TextField(loc("ページ内を検索", "Find in page"), text: $findQuery)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
@@ -408,7 +418,7 @@ struct ContentView: View {
             Button { viewModel.findInPage(findQuery) } label: {
                 Image(systemName: "chevron.down")
             }
-            Button("完了") {
+            Button(loc("完了", "Done")) {
                 showFindBar = false
                 findQuery = ""
                 viewModel.clearFindSelection()
@@ -451,20 +461,20 @@ struct ContentView: View {
                     }
                 }
                 if viewModel.history.isEmpty {
-                    Text("履歴はまだありません")
+                    Text(loc("履歴はまだありません", "No history yet"))
                         .foregroundStyle(.secondary)
                         .font(.system(size: 14))
                 }
             }
-            .navigationTitle("履歴")
+            .navigationTitle(loc("履歴", "History"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("消去", role: .destructive) { viewModel.clearHistory() }
+                    Button(loc("消去", "Clear"), role: .destructive) { viewModel.clearHistory() }
                         .disabled(viewModel.history.isEmpty)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完了") { showHistory = false }
+                    Button(loc("完了", "Done")) { showHistory = false }
                 }
             }
         }
@@ -500,7 +510,7 @@ struct ContentView: View {
 
             controlButton(
                 icon: "cursorarrow.click.2",
-                label: "左クリック",
+                label: loc("左クリック", "L-click"),
                 active: false
             ) {
                 viewModel.click()
@@ -509,7 +519,7 @@ struct ContentView: View {
 
             controlButton(
                 icon: "cursorarrow.rays",
-                label: "右クリック",
+                label: loc("右クリック", "R-click"),
                 active: false
             ) {
                 viewModel.click(button: 2)
@@ -518,7 +528,7 @@ struct ContentView: View {
 
             controlButton(
                 icon: "hand.point.up.left.fill",
-                label: "ドラッグ",
+                label: loc("ドラッグ", "Drag"),
                 active: viewModel.dragLocked
             ) {
                 viewModel.toggleDragLock()
@@ -527,7 +537,7 @@ struct ContentView: View {
 
             controlButton(
                 icon: "dpad",
-                label: "スティック",
+                label: loc("スティック", "Stick"),
                 active: viewModel.joystickVisible
             ) {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -537,7 +547,7 @@ struct ContentView: View {
 
             controlButton(
                 icon: "keyboard",
-                label: "キーボード",
+                label: loc("キーボード", "Keyboard"),
                 active: viewModel.keyboardVisible
             ) {
                 viewModel.keyboardVisible.toggle()
@@ -545,7 +555,7 @@ struct ContentView: View {
 
             controlButton(
                 icon: "keyboard.fill",
-                label: "フルキー",
+                label: loc("フルキー", "Full keys"),
                 active: viewModel.fullKeyboard
             ) {
                 viewModel.fullKeyboard.toggle()
@@ -554,7 +564,7 @@ struct ContentView: View {
 
             controlButton(
                 icon: "arrow.up.left.and.arrow.down.right",
-                label: "全画面",
+                label: loc("全画面", "Fullscreen"),
                 active: false
             ) {
                 viewModel.immersive = true
@@ -620,7 +630,7 @@ struct ContentView: View {
                         VStack(spacing: 8) {
                             Image(systemName: "plus")
                                 .font(.system(size: 26, weight: .medium))
-                            Text("新しいタブ")
+                            Text(loc("新しいタブ", "New tab"))
                                 .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundStyle(.secondary)
@@ -636,11 +646,11 @@ struct ContentView: View {
                 }
                 .padding(14)
             }
-            .navigationTitle("タブ (\(viewModel.tabs.count))")
+            .navigationTitle(loc("タブ", "Tabs") + " (\(viewModel.tabs.count))")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完了") { showTabs = false }
+                    Button(loc("完了", "Done")) { showTabs = false }
                 }
             }
             .onAppear { viewModel.snapshotActiveTab() }
@@ -655,7 +665,7 @@ struct ContentView: View {
         NavigationStack {
             List {
                 if viewModel.bookmarks.isEmpty {
-                    Text("ブックマークはまだありません。\nツールバーの ★ で追加できます。")
+                    Text(loc("ブックマークはまだありません。\nツールバーの ★ で追加できます。", "No bookmarks yet.\nTap ★ in the toolbar to add one."))
                         .foregroundStyle(.secondary)
                         .font(.system(size: 14))
                 }
@@ -679,12 +689,12 @@ struct ContentView: View {
                 .onDelete { viewModel.bookmarks.remove(atOffsets: $0) }
                 .onMove { viewModel.bookmarks.move(fromOffsets: $0, toOffset: $1) }
             }
-            .navigationTitle("ブックマーク")
+            .navigationTitle(loc("ブックマーク", "Bookmarks"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { EditButton() }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完了") { showBookmarks = false }
+                    Button(loc("完了", "Done")) { showBookmarks = false }
                 }
             }
         }
@@ -745,10 +755,10 @@ struct TabCard: View {
             Button {
                 UIPasteboard.general.string = tab.urlString
             } label: {
-                Label("リンクをコピー", systemImage: "doc.on.doc")
+                Label(loc("リンクをコピー", "Copy link"), systemImage: "doc.on.doc")
             }
             Button(role: .destructive, action: close) {
-                Label("タブを閉じる", systemImage: "xmark")
+                Label(loc("タブを閉じる", "Close tab"), systemImage: "xmark")
             }
         }
         .overlay(alignment: .topTrailing) {
