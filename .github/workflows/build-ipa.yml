@@ -1,9 +1,12 @@
 name: Build unsigned IPA
 
-# Manual trigger only — a private-repo macOS runner counts 10x against the
-# Actions minutes quota, so builds are kicked off on demand rather than on
-# every push.
+# Public repo: GitHub-hosted macOS runners are unlimited/free, so every push
+# to this branch triggers a build automatically. workflow_dispatch is kept
+# for on-demand re-runs.
 on:
+  push:
+    branches:
+      - claude/ios-browser-game-emulator-0j85nx
   workflow_dispatch: {}
 
 jobs:
