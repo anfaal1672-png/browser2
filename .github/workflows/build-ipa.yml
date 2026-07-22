@@ -10,8 +10,36 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  quick-check:
+    name: Quick compile check (simulator)
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # Simulator builds compile much faster than a device build and need no
+      # signing at all — this catches Swift compile errors in ~1-2 minutes
+      # instead of waiting through the full device build to find out.
+      - name: Build for simulator (compile-only, fail fast)
+        run: |
+          xcodebuild build \
+            -project "GameBrowser.xcodeproj" \
+            -scheme "GameBrowser" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build-sim \
+            CODE_SIGNING_ALLOWED=NO
+
   build:
     name: Build GameBrowser (unsigned)
+    needs: quick-check
     runs-on: macos-14
     timeout-minutes: 30
     steps:
