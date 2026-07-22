@@ -460,6 +460,38 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Highlight recording (instant replay)
+
+    /// Buffer the last ~15s of on-screen play invisibly, so a single tap can
+    /// save "what just happened" as a video — like a console's instant replay.
+    @Published var highlightsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(highlightsEnabled, forKey: "highlightsEnabled")
+            highlightsEnabled ? HighlightRecorder.shared.startBuffering() : HighlightRecorder.shared.stopBuffering()
+        }
+    }
+
+    @Published var highlightSaveState: HighlightSaveState = .idle
+
+    enum HighlightSaveState: Equatable {
+        case idle, saving, saved, failed
+    }
+
+    func saveHighlight() {
+        guard highlightsEnabled, highlightSaveState != .saving else { return }
+        highlightSaveState = .saving
+        hapticMedium()
+        HighlightRecorder.shared.saveHighlight { [weak self] success in
+            guard let self else { return }
+            self.highlightSaveState = success ? .saved : .failed
+            if success { self.hapticMedium() }
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                self.highlightSaveState = .idle
+            }
+        }
+    }
+
     private var silenceEngine: AVAudioEngine?
 
     private func startSilence() {
@@ -738,6 +770,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         useFullAdList = defaults.bool(forKey: "useFullAdList")
         webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
         keepAliveInBackground = defaults.bool(forKey: "keepAliveInBackground")
+        highlightsEnabled = defaults.bool(forKey: "highlightsEnabled")
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool
             ?? defaults.bool(forKey: "pcMode")
         if let data = defaults.data(forKey: "history"),
@@ -772,6 +805,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
             .playback, mode: .default, options: [.mixWithOthers])
         try? AVAudioSession.sharedInstance().setActive(true)
         if keepAliveInBackground { startSilence() }
+        if highlightsEnabled { HighlightRecorder.shared.startBuffering() }
         inputMode = pcMode ? .trackpad : .touch
         restoreTabs()
 

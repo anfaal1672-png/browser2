@@ -58,6 +58,8 @@
 	<string>Webサイトがカメラへのアクセスを要求した場合に使用します。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Webサイトがマイクへのアクセスを要求した場合に使用します。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>ゲームのハイライトを保存するために使用します。</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

@@ -56,6 +56,9 @@ struct ContentView: View {
                 .overlay(alignment: .topTrailing) {
                     if viewModel.immersive { immersiveExitButton }
                 }
+                .overlay(alignment: .topLeading) {
+                    if viewModel.highlightsEnabled { highlightButton }
+                }
             }
             .clipped()
 
@@ -154,6 +157,48 @@ struct ContentView: View {
             }
         }
         .padding(10)
+    }
+
+    /// One-tap "instant replay": saves the last ~15s of play to Photos.
+    private var highlightButton: some View {
+        Button { viewModel.saveHighlight() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: highlightIcon)
+                if viewModel.highlightSaveState == .saved {
+                    Text(loc("保存済み", "Saved"))
+                        .font(.system(size: 11, weight: .semibold))
+                } else if viewModel.highlightSaveState == .failed {
+                    Text(loc("失敗", "Failed"))
+                        .font(.system(size: 11, weight: .semibold))
+                }
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(highlightColor)
+            .padding(.horizontal, viewModel.highlightSaveState == .idle ? 9 : 11)
+            .frame(height: 30)
+            .background(.black.opacity(0.45), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 0.5))
+        }
+        .disabled(viewModel.highlightSaveState == .saving)
+        .padding(10)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.highlightSaveState)
+    }
+
+    private var highlightIcon: String {
+        switch viewModel.highlightSaveState {
+        case .idle: return "video.badge.checkmark"
+        case .saving: return "hourglass"
+        case .saved: return "checkmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        }
+    }
+
+    private var highlightColor: Color {
+        switch viewModel.highlightSaveState {
+        case .saved: return .green
+        case .failed: return .red
+        default: return .white.opacity(0.9)
+        }
     }
 
     private func floatingButton(icon: String, action: @escaping () -> Void) -> some View {
@@ -255,6 +300,11 @@ struct ContentView: View {
                     Label(loc("ページを翻訳", "Translate page"), systemImage: "character.bubble")
                 }
                 .disabled(viewModel.currentURL == nil)
+                if viewModel.highlightsEnabled {
+                    Button { viewModel.saveHighlight() } label: {
+                        Label(loc("ハイライトを保存(直近15秒)", "Save highlight (last 15s)"), systemImage: "video.badge.checkmark")
+                    }
+                }
                 Divider()
                 Button {
                     viewModel.desktopMode.toggle()

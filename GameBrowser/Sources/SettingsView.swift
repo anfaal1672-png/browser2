@@ -33,6 +33,7 @@ struct SettingsView: View {
                     securityCard
                     permissionsCard
                     dataCard
+                    highlightsCard
                     backgroundCard
                 }
                 .padding(.horizontal, 16)
@@ -263,6 +264,16 @@ struct SettingsView: View {
                                 in: RoundedRectangle(cornerRadius: 10))
             }
             .disabled(!clearCookies && !clearCache && !clearHistoryToo)
+        }
+    }
+
+    private var highlightsCard: some View {
+        card(icon: "video.badge.checkmark", tint: .pink, title: loc("ハイライト", "Highlights")) {
+            toggleRow(loc("インスタントリプレイを有効にする", "Enable instant replay"), isOn: $viewModel.highlightsEnabled)
+            Text(loc("直近15秒のプレイ画面を裏で保持しておき、ボタン一つで写真アプリに保存できます。録画中の表示は出ません。",
+                      "Keeps the last 15 seconds of play buffered invisibly — tap once to save it to Photos. No recording indicator is shown."))
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.45))
         }
     }
 
