@@ -12,6 +12,9 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -35,6 +38,12 @@ data class GbKey(val key: String, val code: String, val keyCode: Int, val label:
         val arrowRight = GbKey("ArrowRight", "ArrowRight", 39, "\u25B6")
     }
 }
+
+/** A saved page. Mirrors BrowserViewModel.swift's `Bookmark` struct. */
+data class Bookmark(val id: String = UUID.randomUUID().toString(), var title: String, var url: String)
+
+/** One visited-page record. Mirrors BrowserViewModel.swift's `HistoryEntry` struct (`date` as epoch millis). */
+data class HistoryEntry(val id: String = UUID.randomUUID().toString(), var title: String, var url: String, var date: Long)
 
 /**
  * Central app state: tabs (via [tabManager]), virtual cursor/keyboard state,
@@ -69,7 +78,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     var pointerLocked by mutableStateOf(false)
     var pageHidesCursor by mutableStateOf(false)
 
-    var cursorMode by mutableStateOf(true)
+    private var cursorModeBacking by mutableStateOf(true)
+
+    /** Whether the virtual mouse/trackpad UI is shown, vs. native touch handling. Mirrors `inputMode != .touch`. */
+    var cursorMode: Boolean
+        get() = cursorModeBacking
+        set(value) {
+            cursorModeBacking = value
+            applyKeyboardSuppression()
+        }
     var keyboardVisible by mutableStateOf(false)
     var joystickVisible by mutableStateOf(false)
     var fullKeyboard by mutableStateOf(false)
@@ -107,7 +124,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     // MARK: - Settings (persisted)
 
-    var pcMode: Boolean by PersistedBoolean(prefs, "pcMode", false)
+    private var pcModeBacking: Boolean by PersistedBoolean(prefs, "pcMode", false)
+
+    /** App-level mode: phone = plain touch browser without the control bar, PC = gaming browser with virtual mouse tools + desktop UA. Mirrors BrowserViewModel.swift's `pcMode` didSet. */
+    var pcMode: Boolean
+        get() = pcModeBacking
+        set(value) {
+            pcModeBacking = value
+            if (value) {
+                cursorMode = true
+            } else {
+                cursorMode = false
+                keyboardVisible = false
+                joystickVisible = false
+                imeActive = false
+                if (dragLocked) toggleDragLock()
+            }
+            if (desktopMode != value) desktopMode = value
+        }
     var controlScheme: ControlScheme by PersistedEnum(prefs, "controlScheme", ControlScheme.entries.toTypedArray(), ControlScheme.CLASSIC)
     var cursorSensitivity: Float by PersistedFloat(prefs, "cursorSensitivity", 1.4f)
     var scrollSpeed: Float by PersistedFloat(prefs, "scrollSpeed", 700f)
@@ -127,7 +161,31 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     var javaScriptEnabled: Boolean by PersistedBoolean(prefs, "javaScriptEnabled", true)
     var capturePolicy: CapturePolicy by PersistedEnum(prefs, "capturePolicy", CapturePolicy.entries.toTypedArray(), CapturePolicy.ASK)
     var webNotificationsEnabled: Boolean by PersistedBoolean(prefs, "webNotificationsEnabled", true)
-    var highlightsEnabled: Boolean by PersistedBoolean(prefs, "highlightsEnabled", false)
+    private var highlightsEnabledBacking: Boolean by PersistedBoolean(prefs, "highlightsEnabled", false)
+    var highlightsEnabled: Boolean
+        get() = highlightsEnabledBacking
+        set(value) {
+            highlightsEnabledBacking = value
+            if (value) HighlightRecorder.enable(appContext) else HighlightRecorder.disable(appContext)
+        }
+
+    /** Idle/Saving/Saved/Failed state driving the floating capture button (mirrors iOS BrowserViewModel.HighlightSaveState). */
+    var highlightSaveState by mutableStateOf(HighlightSaveState.Idle)
+
+    /** Exports the last ~15s of buffered play. Mirrors HighlightRecorder.swift's `saveHighlight(duration:completion:)`. */
+    fun saveHighlight() {
+        if (!highlightsEnabled || highlightSaveState == HighlightSaveState.Saving) return
+        highlightSaveState = HighlightSaveState.Saving
+        hapticMedium()
+        HighlightRecorder.saveHighlight(appContext) { success ->
+            highlightSaveState = if (success) HighlightSaveState.Saved else HighlightSaveState.Failed
+            if (success) hapticMedium()
+            viewModelScope.launch {
+                delay(2000)
+                highlightSaveState = HighlightSaveState.Idle
+            }
+        }
+    }
 
     private var desktopModeBacking: Boolean by PersistedBoolean(prefs, "desktopMode", false)
     var desktopMode: Boolean
@@ -288,8 +346,238 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (cache) {
             for (tab in tabManager.tabs) tab.webView.clearCache(true)
         }
-        // History isn't tracked as a separate persisted list on this port yet
-        // (no bookmarks/history screens ported); nothing further to clear.
+        if (history) clearHistory()
+    }
+
+    // MARK: - Bookmarks
+
+    private fun loadBookmarks(): List<Bookmark> {
+        val json = prefs.getString("bookmarks", null)
+        if (json == null) {
+            // Starter bookmarks: popular PC browser game portals (mirrors BrowserViewModel.swift's default set).
+            return listOf(
+                Bookmark(title = "CrazyGames", url = "https://www.crazygames.com"),
+                Bookmark(title = "Poki", url = "https://poki.com"),
+                Bookmark(title = "itch.io", url = "https://itch.io/games/platform-web"),
+                Bookmark(title = "Miniclip", url = "https://www.miniclip.com"),
+            )
+        }
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                Bookmark(
+                    id = obj.optString("id", UUID.randomUUID().toString()),
+                    title = obj.optString("title", ""),
+                    url = obj.optString("url", ""),
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveBookmarksToPrefs(list: List<Bookmark>) {
+        val array = JSONArray()
+        for (b in list) {
+            val obj = JSONObject()
+            obj.put("id", b.id)
+            obj.put("title", b.title)
+            obj.put("url", b.url)
+            array.put(obj)
+        }
+        prefs.edit().putString("bookmarks", array.toString()).apply()
+    }
+
+    private var bookmarksBacking: List<Bookmark> by mutableStateOf(loadBookmarks())
+    var bookmarks: List<Bookmark>
+        get() = bookmarksBacking
+        set(value) {
+            bookmarksBacking = value
+            saveBookmarksToPrefs(value)
+        }
+
+    val isCurrentPageBookmarked: Boolean
+        get() {
+            val url = currentUrl ?: return false
+            return bookmarks.any { it.url == url }
+        }
+
+    fun toggleBookmark() {
+        val url = currentUrl ?: return
+        val index = bookmarks.indexOfFirst { it.url == url }
+        bookmarks = if (index >= 0) {
+            bookmarks.toMutableList().also { it.removeAt(index) }
+        } else {
+            val title = tabManager.activeTab?.title?.takeIf { it.isNotBlank() } ?: url
+            bookmarks + Bookmark(title = title, url = url)
+        }
+    }
+
+    fun open(bookmark: Bookmark) {
+        webView?.loadUrl(bookmark.url)
+    }
+
+    /** Dark start page with bookmark tiles, shown in new tabs when [newTabPage] is [NewTabPage.START_PAGE]. */
+    fun startPageHtml(): String {
+        val tiles = bookmarks.joinToString("") { bookmark ->
+            val host = try { Uri.parse(bookmark.url).host } catch (e: Exception) { null } ?: ""
+            val initial = bookmark.title.take(1).uppercase()
+            """
+            <a class="tile" href="${htmlEscape(bookmark.url)}">
+              <div class="icon"><img src="https://www.google.com/s2/favicons?domain=${htmlEscape(host)}&sz=64" onerror="this.remove()" alt=""><span>${htmlEscape(initial)}</span></div>
+              <div class="name">${htmlEscape(bookmark.title)}</div>
+            </a>
+            """.trimIndent()
+        }
+        return """
+        <!DOCTYPE html><html><head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+          body { background:#0b0f14; color:#e8edf2; font-family:sans-serif;
+                 min-height:100vh; display:flex; flex-direction:column; align-items:center;
+                 padding:52px 20px 40px; }
+          h1 { font-size:26px; font-weight:700; letter-spacing:.5px;
+               background:linear-gradient(90deg,#39d3f5,#3b82f6);
+               -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+          p.sub { color:#7b8794; font-size:13px; margin:6px 0 34px; }
+          .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr));
+                  gap:14px; width:100%; max-width:560px; }
+          .tile { display:flex; flex-direction:column; align-items:center; gap:8px;
+                  padding:14px 6px; border-radius:16px; background:#141b23;
+                  border:1px solid #1f2937; text-decoration:none; color:#e8edf2; }
+          .tile:active { background:#1d2733; }
+          .icon { width:44px; height:44px; border-radius:12px; background:#22303f;
+                  display:flex; align-items:center; justify-content:center;
+                  font-size:19px; font-weight:700; color:#39d3f5; position:relative; }
+          .icon img { width:28px; height:28px; position:absolute; }
+          .name { font-size:12px; max-width:100%; overflow:hidden;
+                  text-overflow:ellipsis; white-space:nowrap; }
+        </style></head><body>
+        <h1>GameBrowser</h1>
+        <p class="sub">${loc("ブックマークから開く、または上のバーで検索", "Open a bookmark, or search using the bar above")}</p>
+        <div class="grid">$tiles</div>
+        </body></html>
+        """.trimIndent()
+    }
+
+    private fun htmlEscape(text: String) =
+        text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+
+    // MARK: - History
+
+    private fun loadHistory(): List<HistoryEntry> {
+        val json = prefs.getString("history", null) ?: return emptyList()
+        return try {
+            val array = JSONArray(json)
+            (0 until array.length()).map { i ->
+                val obj = array.getJSONObject(i)
+                HistoryEntry(
+                    id = obj.optString("id", UUID.randomUUID().toString()),
+                    title = obj.optString("title", ""),
+                    url = obj.optString("url", ""),
+                    date = obj.optLong("date", System.currentTimeMillis()),
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveHistoryToPrefs(list: List<HistoryEntry>) {
+        val array = JSONArray()
+        for (h in list) {
+            val obj = JSONObject()
+            obj.put("id", h.id)
+            obj.put("title", h.title)
+            obj.put("url", h.url)
+            obj.put("date", h.date)
+            array.put(obj)
+        }
+        prefs.edit().putString("history", array.toString()).apply()
+    }
+
+    private var historyBacking: List<HistoryEntry> by mutableStateOf(loadHistory())
+    var history: List<HistoryEntry>
+        get() = historyBacking
+        set(value) {
+            historyBacking = value
+            saveHistoryToPrefs(value)
+        }
+
+    /** Records a finished page load into [history], capped at the most recent 300 entries. Called by every tab (not just the active one), mirroring the iOS navigation delegate. */
+    fun recordHistory(url: String, title: String) {
+        if (url.isEmpty() || history.lastOrNull()?.url == url) return
+        val updated = history + HistoryEntry(title = title, url = url, date = System.currentTimeMillis())
+        history = if (updated.size > 300) updated.takeLast(300) else updated
+    }
+
+    fun clearHistory() {
+        history = emptyList()
+    }
+
+    // MARK: - Page translation, find-in-page, immersive mode, smooth scroll
+
+    /** Translates the current page via Google Translate's proxy (host.translate.goog) — no API key needed. */
+    fun translatePage() {
+        val urlString = currentUrl ?: return
+        try {
+            val uri = Uri.parse(urlString)
+            val host = uri.host ?: return
+            if (host.endsWith(".translate.goog")) return
+            val target = Localization.translationTarget
+            val translatedHost = host.replace("-", "--").replace(".", "-") + ".translate.goog"
+            val builder = uri.buildUpon().scheme("https").authority(translatedHost)
+            builder.appendQueryParameter("_x_tr_sl", "auto")
+            builder.appendQueryParameter("_x_tr_tl", target)
+            builder.appendQueryParameter("_x_tr_hl", target)
+            webView?.loadUrl(builder.build().toString())
+        } catch (e: Exception) {
+            // Malformed URL; nothing sensible to translate.
+        }
+    }
+
+    private var lastFindQuery: String? = null
+
+    /** Finds [query] in the page via WebView's native find-in-page (highlights all matches, then jumps between them). */
+    fun findInPage(query: String, forward: Boolean = true) {
+        if (query.isEmpty()) return
+        val view = webView ?: return
+        if (query != lastFindQuery) {
+            lastFindQuery = query
+            view.findAllAsync(query)
+        } else {
+            view.findNext(forward)
+        }
+    }
+
+    fun clearFindSelection() {
+        lastFindQuery = null
+        webView?.clearMatches()
+    }
+
+    /** Fullscreen/immersive presentation: hides the toolbar and system bars (wired in MainActivity). */
+    var immersive by mutableStateOf(false)
+
+    private var scrollJob: Job? = null
+    private var scrollDirection: Float = 0f
+
+    /** Starts a smooth repeating scroll in [direction] (-1 up, 1 down) at [scrollSpeed] px/s, for the scroll-button strip. */
+    fun startSmoothScroll(direction: Float) {
+        scrollDirection = direction
+        if (scrollJob != null) return
+        scrollJob = viewModelScope.launch {
+            while (true) {
+                scroll(0f, scrollDirection * scrollSpeed / 60f)
+                delay(16)
+            }
+        }
+    }
+
+    fun endSmoothScroll() {
+        scrollJob?.cancel()
+        scrollJob = null
     }
 
     // MARK: - Built-in romaji IME

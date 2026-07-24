@@ -33,6 +33,9 @@ import kotlin.math.max
 /** Default page for a brand-new tab or the very first launch (mirrors GameWebView.kt's default). */
 private const val DEFAULT_HOME_URL = "https://www.google.com"
 
+/** Persisted stand-in URL for a tab showing the local start page (which WebView reports as a blank/no URL). Mirrors BrowserViewModel.swift's `startPageMarker`. */
+private const val START_PAGE_MARKER = "gamebrowser://start"
+
 /** How long to wait after a page finishes loading before restoring its saved scroll offset. */
 private const val SCROLL_RESTORE_DELAY_MS = 600L
 
@@ -94,6 +97,9 @@ class Tab(val webView: WebView) {
     var progress: Float by mutableStateOf(0f)
     var canGoBack: Boolean by mutableStateOf(false)
     var canGoForward: Boolean by mutableStateOf(false)
+
+    /** True while this tab is showing the local bookmarks start page (loaded via loadDataWithBaseURL, so WebView itself reports no real URL for it). */
+    var isStartPage: Boolean = false
 
     /**
      * Last requested URL; used for persistence while the page is still
@@ -230,11 +236,20 @@ class TabManager(
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
+                // loadDataWithBaseURL(null, ...) (the local start page) reports back a
+                // blank/no URL here, same as iOS's `url?.scheme == "about"` check —
+                // recomputed on every finish so navigating away from the start page
+                // (e.g. tapping a bookmark tile) correctly clears the flag again.
+                tab.isStartPage = url.isNullOrEmpty() || url == "about:blank"
                 tab.url = url
                 tab.title = view.title ?: ""
                 tab.canGoBack = view.canGoBack()
                 tab.canGoForward = view.canGoForward()
                 tab.pendingUrl = null
+
+                if (!tab.isStartPage && url != null) {
+                    viewModel.recordHistory(url, tab.title)
+                }
 
                 // Only the currently active tab drives the visible toolbar state —
                 // a background tab finishing a load must not steal the address bar.
@@ -298,12 +313,20 @@ class TabManager(
     // MARK: - Tabs: create / select / close
 
     fun newTab(url: String? = null) {
-        val target = url ?: DEFAULT_HOME_URL
         val tab = createTab()
-        tab.pendingUrl = target
-        _tabs.add(tab)
-        selectTab(_tabs.size - 1)
-        tab.webView.loadUrl(target)
+        val useStartPage = url == null && viewModel.newTabPage == NewTabPage.START_PAGE
+        if (useStartPage) {
+            tab.isStartPage = true
+            _tabs.add(tab)
+            selectTab(_tabs.size - 1)
+            tab.webView.loadDataWithBaseURL(null, viewModel.startPageHtml(), "text/html", "UTF-8", null)
+        } else {
+            val target = url ?: DEFAULT_HOME_URL
+            tab.pendingUrl = target
+            _tabs.add(tab)
+            selectTab(_tabs.size - 1)
+            tab.webView.loadUrl(target)
+        }
         saveTabs()
     }
 
@@ -465,9 +488,11 @@ class TabManager(
         val array = JSONArray()
         for (tab in tabs) {
             val liveUrl = tab.webView.url
-            // A load that hasn't reported its own url yet (or reports
-            // about:blank) falls back to the last URL we asked it to load.
-            val urlString = if (liveUrl.isNullOrEmpty() || liveUrl == "about:blank") {
+            val urlString = if (tab.isStartPage) {
+                START_PAGE_MARKER
+            } else if (liveUrl.isNullOrEmpty() || liveUrl == "about:blank") {
+                // A load that hasn't reported its own url yet (or reports
+                // about:blank) falls back to the last URL we asked it to load.
                 tab.pendingUrl ?: tab.url ?: DEFAULT_HOME_URL
             } else {
                 liveUrl
@@ -525,9 +550,14 @@ class TabManager(
         val snapshotDir = snapshotsDir()
         records.forEachIndexed { i, record ->
             val tab = createTab()
-            tab.pendingUrl = record.url
-            tab.pendingScrollX = record.scrollX
-            tab.pendingScrollY = record.scrollY
+            val isStartPage = record.url == START_PAGE_MARKER
+            if (isStartPage) {
+                tab.isStartPage = true
+            } else {
+                tab.pendingUrl = record.url
+                tab.pendingScrollX = record.scrollX
+                tab.pendingScrollY = record.scrollY
+            }
             val snapFile = File(snapshotDir, "$i.jpg")
             if (snapFile.exists()) {
                 tab.snapshot = BitmapFactory.decodeFile(snapFile.path)
@@ -535,7 +565,11 @@ class TabManager(
             _tabs.add(tab)
             // Every restored tab starts paused; selectTab() below resumes the right one.
             tab.webView.onPause()
-            tab.webView.loadUrl(record.url)
+            if (isStartPage) {
+                tab.webView.loadDataWithBaseURL(null, viewModel.startPageHtml(), "text/html", "UTF-8", null)
+            } else {
+                tab.webView.loadUrl(record.url)
+            }
         }
 
         selectTab(savedActive.coerceIn(0, tabs.size - 1))

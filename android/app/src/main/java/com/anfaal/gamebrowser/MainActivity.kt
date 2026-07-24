@@ -1,6 +1,8 @@
 package com.anfaal.gamebrowser
 
 import android.Manifest
+import android.app.Activity
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
@@ -9,14 +11,20 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,6 +38,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.FragmentActivity
 
 /**
@@ -45,6 +56,24 @@ class MainActivity : FragmentActivity() {
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { /* WebView's onPermissionRequest re-checks grants at call time */ }
 
+    private val mediaProjectionManager by lazy {
+        getSystemService(MediaProjectionManager::class.java)
+    }
+
+    /** Handles the system screen-capture consent dialog for [HighlightRecorder]. */
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            HighlightRecorder.onConsentGranted(this, result.resultCode, data)
+        } else {
+            // Declined the system dialog — onConsentDenied() fires onBufferingUnavailable,
+            // which flips highlightsEnabled back off so Settings stays honest.
+            HighlightRecorder.onConsentDenied()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -56,6 +85,9 @@ class MainActivity : FragmentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
         permissionLauncher.launch(permissions.toTypedArray())
 
         // Mirrors ContentView's `@State private var isLocked = UserDefaults...` cold-start
@@ -63,14 +95,61 @@ class MainActivity : FragmentActivity() {
         // if none are enrolled, AppLock.authenticate's own "don't lock the user out" fallback).
         if (viewModel.appLockEnabled) viewModel.isLocked = true
 
+        HighlightRecorder.onRequestConsent = {
+            screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+        }
+        HighlightRecorder.onBufferingUnavailable = {
+            viewModel.highlightsEnabled = false
+        }
+        // Android's projection consent token is one-shot, so a setting left on from a
+        // previous process isn't actually buffering after a cold start — re-request it
+        // once here (not from onResume, which would re-prompt on every foreground/
+        // background cycle and stack awkwardly with the app-lock screen).
+        if (viewModel.highlightsEnabled) {
+            HighlightRecorder.enable(applicationContext)
+        }
+
         setContent {
             var showTabs by remember { mutableStateOf(false) }
             var showSettings by remember { mutableStateOf(false) }
+            var showBookmarks by remember { mutableStateOf(false) }
+            var showHistory by remember { mutableStateOf(false) }
+            var showFindBar by remember { mutableStateOf(false) }
+            var findQuery by remember { mutableStateOf("") }
+
+            fun dismissFindBar() {
+                if (!showFindBar) return
+                showFindBar = false
+                findQuery = ""
+                viewModel.clearFindSelection()
+            }
+
+            // Hides/shows the system status/nav bars to match viewModel.immersive,
+            // mirroring ContentView.swift's `.overlay(alignment: .topTrailing)` fullscreen mode.
+            LaunchedEffect(viewModel.immersive) {
+                val controller = WindowCompat.getInsetsController(window, window.decorView)
+                if (viewModel.immersive) {
+                    controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    controller.hide(WindowInsetsCompat.Type.systemBars())
+                } else {
+                    controller.show(WindowInsetsCompat.Type.systemBars())
+                }
+            }
 
             Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    if (!viewModel.toolbarOnBottom) {
-                        BrowserToolbar(viewModel, onTabsClick = { showTabs = true }, onSettingsClick = { showSettings = true })
+                    if (!viewModel.immersive && !viewModel.toolbarOnBottom) {
+                        BrowserToolbar(
+                            viewModel,
+                            onTabsClick = { showTabs = true },
+                            onSettingsClick = { showSettings = true },
+                            onBookmarksClick = { showBookmarks = true },
+                            onHistoryClick = { showHistory = true },
+                            onFindClick = { showFindBar = true },
+                        )
+                        if (showFindBar) {
+                            FindBar(viewModel, findQuery, { findQuery = it }, onDismiss = ::dismissFindBar)
+                        }
                     }
 
                     Box(
@@ -86,6 +165,15 @@ class MainActivity : FragmentActivity() {
                             TrackpadOverlay(viewModel, modifier = Modifier.fillMaxSize())
                             CursorOverlay(viewModel, modifier = Modifier.fillMaxSize())
                         }
+                        if (viewModel.cursorMode && viewModel.showScrollButtons) {
+                            ScrollButtons(viewModel, modifier = Modifier.align(Alignment.CenterEnd))
+                        }
+                        if (viewModel.immersive) {
+                            ImmersiveExitControls(viewModel, modifier = Modifier.align(Alignment.TopEnd).padding(10.dp))
+                        }
+                        if (viewModel.highlightsEnabled) {
+                            HighlightButton(viewModel, modifier = Modifier.align(Alignment.TopStart))
+                        }
                     }
 
                     if (viewModel.pendingCredential != null) {
@@ -99,10 +187,22 @@ class MainActivity : FragmentActivity() {
                         VirtualKeyboardHost(viewModel)
                     }
 
-                    ControlBar(viewModel)
+                    if (viewModel.pcMode && !viewModel.immersive) {
+                        ControlBar(viewModel)
+                    }
 
-                    if (viewModel.toolbarOnBottom) {
-                        BrowserToolbar(viewModel, onTabsClick = { showTabs = true }, onSettingsClick = { showSettings = true })
+                    if (!viewModel.immersive && viewModel.toolbarOnBottom) {
+                        if (showFindBar) {
+                            FindBar(viewModel, findQuery, { findQuery = it }, onDismiss = ::dismissFindBar)
+                        }
+                        BrowserToolbar(
+                            viewModel,
+                            onTabsClick = { showTabs = true },
+                            onSettingsClick = { showSettings = true },
+                            onBookmarksClick = { showBookmarks = true },
+                            onHistoryClick = { showHistory = true },
+                            onFindClick = { showFindBar = true },
+                        )
                     }
                 }
 
@@ -115,6 +215,12 @@ class MainActivity : FragmentActivity() {
                 }
                 if (showSettings) {
                     SettingsScreen(viewModel, onDismiss = { showSettings = false }, modifier = Modifier.fillMaxSize())
+                }
+                if (showBookmarks) {
+                    BookmarksScreen(viewModel, onDismiss = { showBookmarks = false }, modifier = Modifier.fillMaxSize())
+                }
+                if (showHistory) {
+                    HistoryScreen(viewModel, onDismiss = { showHistory = false }, modifier = Modifier.fillMaxSize())
                 }
             }
 
@@ -161,7 +267,32 @@ class MainActivity : FragmentActivity() {
     override fun onDestroy() {
         viewModel.releaseAllKeys()
         gamepadInput.dispose()
+        HighlightRecorder.onRequestConsent = null
+        HighlightRecorder.onBufferingUnavailable = null
         super.onDestroy()
+    }
+}
+
+/** Small floating controls shown in immersive mode. Mirrors ContentView.swift's `immersiveExitButton`. */
+@Composable
+private fun ImmersiveExitControls(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FloatingButton(Icons.Filled.Keyboard) { viewModel.keyboardVisible = !viewModel.keyboardVisible }
+        FloatingButton(Icons.Filled.FullscreenExit) { viewModel.immersive = false }
+    }
+}
+
+@Composable
+private fun FloatingButton(icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .background(Color.Black.copy(alpha = 0.45f), androidx.compose.foundation.shape.CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconButton(onClick = onClick) {
+            Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = 0.9f))
+        }
     }
 }
 
