@@ -118,5 +118,11 @@ final class GamepadController {
             viewModel.mouseUp()
             leftMouseHeld = false
         }
+        // Without this, a trigger still physically held across a disconnect/
+        // reconnect (e.g. a momentary Bluetooth drop) reads as "unchanged"
+        // on the next tick and never fires mouseDown()/click() again until
+        // the user fully releases and re-presses it.
+        rightTriggerWasPressed = false
+        leftTriggerWasPressed = false
     }
 }

@@ -10,18 +10,35 @@ final class HighlightRecorder {
 
     private(set) var isBuffering = false
     private var isExporting = false
+    /// What the setting currently wants, independent of `isBuffering` (which
+    /// only reflects the last confirmed OS callback). Lets a start that
+    /// completes after the user already disabled the feature self-correct
+    /// instead of leaving ReplayKit buffering against their wishes.
+    private var wantsBuffering = false
 
     var isAvailable: Bool { RPScreenRecorder.shared().isAvailable }
 
     func startBuffering() {
-        guard !isBuffering, isAvailable else { return }
+        guard isAvailable else { return }
+        wantsBuffering = true
+        guard !isBuffering else { return }
         RPScreenRecorder.shared().startClipBuffering { [weak self] error in
-            Task { @MainActor in self?.isBuffering = (error == nil) }
+            Task { @MainActor in
+                guard let self else { return }
+                self.isBuffering = (error == nil)
+                if self.isBuffering && !self.wantsBuffering {
+                    self.stopBuffering()
+                }
+            }
         }
     }
 
     func stopBuffering() {
-        guard isBuffering else { return }
+        wantsBuffering = false
+        // Always attempt the native stop, even if `isBuffering` still reads
+        // false (e.g. a startClipBuffering call is still in flight) — a
+        // guard here previously made this a silent no-op in that case,
+        // leaving ReplayKit buffering after the user turned the feature off.
         RPScreenRecorder.shared().stopClipBuffering { [weak self] _ in
             Task { @MainActor in self?.isBuffering = false }
         }

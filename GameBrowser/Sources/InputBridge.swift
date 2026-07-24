@@ -20,6 +20,7 @@ enum InputBridge {
             dnd: null,        // in-progress emulated HTML5 drag-and-drop
             suppressKeyboard: false,   // cursor mode: don't pop the OS keyboard on focus
             compLen: 0,   // length of the in-field IME composition being edited
+            compTarget: null,   // element compLen applies to
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
@@ -265,7 +266,22 @@ enum InputBridge {
             if (start === null) { return; }
             const delta = (key === 'ArrowLeft') ? -1 : 1;
             if (shift) {
-                el.setSelectionRange(start, Math.max(start, Math.min(len, end + delta)));
+                // Track which end is the moving "focus" vs. the fixed
+                // "anchor" via selectionDirection, like a real browser —
+                // otherwise a selection can only ever grow/shrink to the
+                // right of where it started (Shift+ArrowLeft from a
+                // collapsed caret could never select backward at all).
+                if (start === end) {
+                    const pos = Math.max(0, Math.min(len, start + delta));
+                    if (delta < 0) { el.setSelectionRange(pos, start, 'backward'); }
+                    else { el.setSelectionRange(end, pos, 'forward'); }
+                } else if (el.selectionDirection === 'backward') {
+                    const pos = Math.max(0, Math.min(end, start + delta));
+                    el.setSelectionRange(pos, end, 'backward');
+                } else {
+                    const pos = Math.max(start, Math.min(len, end + delta));
+                    el.setSelectionRange(start, pos, 'forward');
+                }
             } else if (start !== end) {
                 const pos = delta < 0 ? start : end;
                 el.setSelectionRange(pos, pos);
@@ -316,10 +332,12 @@ enum InputBridge {
                     const t = targetAt(x, y);
                     if (isFrame(t)) {
                         state.keyFrame = t;
+                        state.downFrame = t;   // remember for a release outside the frame
                         forward(t, 'down', x, y, [button]);
                         return;
                     }
                     state.keyFrame = null;
+                    state.downFrame = null;
                 }
                 state.buttons |= (button === 2 ? 2 : button === 1 ? 4 : 1);
                 const locked = document.pointerLockElement;
@@ -349,12 +367,19 @@ enum InputBridge {
                 // Forward the release only if the press was also forwarded
                 // (no button is held in this frame); otherwise finish the local drag.
                 if (!document.pointerLockElement && !state.buttons) {
-                    const t = targetAt(x, y);
+                    // Prefer the frame that actually received the down — if the
+                    // cursor was dragged out of it before release, targetAt(x,y)
+                    // would no longer see a frame there and the release would
+                    // never reach it, leaving its button/drag state stuck.
+                    const t = (state.downFrame && state.downFrame.isConnected)
+                        ? state.downFrame : targetAt(x, y);
                     if (isFrame(t)) {
+                        if (button === 0) { state.downFrame = null; }
                         forward(t, 'up', x, y, [button, clickCount]);
                         return;
                     }
                 }
+                if (button === 0) { state.downFrame = null; }
                 state.buttons &= ~(button === 2 ? 2 : button === 1 ? 4 : 1);
 
                 // Finish an emulated HTML5 drag-and-drop instead of clicking.
@@ -629,6 +654,17 @@ enum InputBridge {
             }
             return null;
         }
+
+        // IME composition tracking (state.compLen) is per-element; without
+        // this, clicking a different field mid-composition left the stale
+        // count around, so the next keystroke there deleted/overwrote that
+        // field's own existing text instead of starting a fresh composition.
+        document.addEventListener('focusin', function (e) {
+            if (state.compTarget !== e.target) {
+                state.compLen = 0;
+                state.compTarget = e.target;
+            }
+        }, true);
 
         // Tell native code when a password or card field gains focus.
         document.addEventListener('focusin', function (e) {

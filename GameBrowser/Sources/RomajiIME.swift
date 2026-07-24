@@ -73,7 +73,7 @@ enum RomajiConverter {
                 if next == "n" {
                     kana += "ん"; i += 2; continue
                 }
-                if !vowels.contains(next), next != "y", next.isLetter {
+                if !vowels.contains(next), next != "y", (next.isLetter || next.isNumber) {
                     kana += "ん"; i += 1; continue
                 }
             }

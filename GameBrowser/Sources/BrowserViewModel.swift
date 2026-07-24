@@ -107,7 +107,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var cursorFaded: Bool = false
     private var cursorFadeTask: Task<Void, Never>?
 
-    @Published var joystickVisible: Bool = false
+    @Published var joystickVisible: Bool = false {
+        didSet { if !joystickVisible { releaseAllKeys() } }   // avoid a stuck held key when hidden mid-press
+    }
 
     /// User-dragged joystick position offset from its default corner.
     @Published var joystickOffset: CGSize = BrowserViewModel.clampJoystickOffset(CGSize(
@@ -189,8 +191,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var adBlockEnabled: Bool {
         didSet {
             UserDefaults.standard.set(adBlockEnabled, forKey: "adBlockEnabled")
+            adBlockGeneration += 1
+            let generation = adBlockGeneration
             Task { [weak self] in
-                await self?.applyAdBlock()
+                await self?.applyAdBlock(generation: generation)
                 self?.webView.reload()
             }
         }
@@ -201,8 +205,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet {
             UserDefaults.standard.set(trackingLevel.rawValue, forKey: "trackingLevel")
             trackingRules = nil
+            adBlockGeneration += 1
+            let generation = adBlockGeneration
             Task { [weak self] in
-                await self?.applyAdBlock()
+                await self?.applyAdBlock(generation: generation)
                 self?.webView.reload()
             }
         }
@@ -213,8 +219,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet {
             UserDefaults.standard.set(useFullAdList, forKey: "useFullAdList")
             adBlockRules = nil
+            adBlockGeneration += 1
+            let generation = adBlockGeneration
             Task { [weak self] in
-                await self?.applyAdBlock()
+                await self?.applyAdBlock(generation: generation)
                 self?.webView.reload()
             }
         }
@@ -222,20 +230,32 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     private var adBlockRules: WKContentRuleList?
     private var trackingRules: WKContentRuleList?
+    /// Bumped on every setting change; lets an in-flight (reentrant, async)
+    /// apply notice it's been superseded and bail instead of overwriting
+    /// newer rules with what it originally fetched.
+    private var adBlockGeneration = 0
 
     /// Compile once, then attach/detach the rule lists on every tab.
-    private func applyAdBlock() async {
+    private func applyAdBlock(generation: Int) async {
+        guard generation == adBlockGeneration else { return }
         if adBlockEnabled && adBlockRules == nil {
+            let rules: WKContentRuleList?
             if useFullAdList, let full = await AdBlocker.fullRuleList() {
-                adBlockRules = full
+                rules = full
             } else {
                 // Builtin list; also the fallback when the download fails.
-                adBlockRules = await AdBlocker.compiledRuleList()
+                rules = await AdBlocker.compiledRuleList()
             }
+            guard generation == adBlockGeneration else { return }
+            adBlockRules = rules
         }
         if trackingLevel != .off && trackingRules == nil {
-            trackingRules = await TrackerBlocker.compiledRuleList(for: trackingLevel)
+            let level = trackingLevel
+            let rules = await TrackerBlocker.compiledRuleList(for: level)
+            guard generation == adBlockGeneration else { return }
+            trackingRules = rules
         }
+        guard generation == adBlockGeneration else { return }
         for tab in tabs {
             let controller = tab.webView.configuration.userContentController
             controller.removeAllContentRuleLists()
@@ -251,15 +271,18 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// Attach the rules to a newly created web view.
     fileprivate func attachAdBlock(to webView: WKWebView) {
         guard adBlockEnabled || trackingLevel != .off else { return }
+        let generation = adBlockGeneration
         Task { [weak self] in
             guard let self else { return }
             if self.adBlockEnabled {
                 if self.adBlockRules == nil {
+                    let rules: WKContentRuleList?
                     if self.useFullAdList, let full = await AdBlocker.fullRuleList() {
-                        self.adBlockRules = full
+                        rules = full
                     } else {
-                        self.adBlockRules = await AdBlocker.compiledRuleList()
+                        rules = await AdBlocker.compiledRuleList()
                     }
+                    if generation == self.adBlockGeneration { self.adBlockRules = rules }
                 }
                 if let rules = self.adBlockRules {
                     webView.configuration.userContentController.add(rules)
@@ -267,7 +290,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
             }
             if self.trackingLevel != .off {
                 if self.trackingRules == nil {
-                    self.trackingRules = await TrackerBlocker.compiledRuleList(for: self.trackingLevel)
+                    let level = self.trackingLevel
+                    let rules = await TrackerBlocker.compiledRuleList(for: level)
+                    if generation == self.adBlockGeneration { self.trackingRules = rules }
                 }
                 if let rules = self.trackingRules {
                     webView.configuration.userContentController.add(rules)
@@ -924,7 +949,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
         @MainActor var title: String {
             let t = webView.title ?? ""
-            return t.isEmpty ? (webView.url?.host ?? "新しいタブ") : t
+            return t.isEmpty ? (webView.url?.host ?? loc("新しいタブ", "New Tab")) : t
         }
         @MainActor var urlString: String { webView.url?.absoluteString ?? "" }
     }
@@ -1019,14 +1044,23 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     func closeTab(_ index: Int) {
         guard tabs.indices.contains(index) else { return }
+        let wasActive = index == activeTabIndex
         let tab = tabs.remove(at: index)
         tab.webView.stopLoading()
         tab.webView.setAllMediaPlaybackSuspended(true)
+
         if tabs.isEmpty {
             newTab()
-        } else {
-            let shifted = activeTabIndex >= index ? activeTabIndex - 1 : activeTabIndex
-            selectTab(min(max(shifted, 0), tabs.count - 1))
+        } else if wasActive {
+            // The tab sliding into the closed slot becomes active (or the
+            // previous one, if the last tab was closed).
+            selectTab(min(index, tabs.count - 1))
+        } else if index < activeTabIndex {
+            // A tab before the active one closed — its own webview/state is
+            // unaffected, so just shift the index. Routing this through
+            // selectTab() would wrongly reset keys/drag/pointer-lock state
+            // on the still-active tab (e.g. dropping a held movement key).
+            activeTabIndex -= 1
         }
         saveTabs()
     }
@@ -1459,12 +1493,12 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
         // window reference and WebKit performs the load itself.
         MainActor.assumeIsolated {
             guard !blockPopups else { return nil }
-            return addPopupTab(configuration: configuration)
+            return addPopupTab(configuration: configuration, requestedURL: navigationAction.request.url)
         }
     }
 
     /// New tab backed by a WebKit-provided popup configuration.
-    private func addPopupTab(configuration: WKWebViewConfiguration) -> WKWebView {
+    private func addPopupTab(configuration: WKWebViewConfiguration, requestedURL: URL?) -> WKWebView {
         // The parent's user scripts and message handlers are inherited via the
         // configuration, so don't add them again.
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -1478,6 +1512,11 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
         attachAdBlock(to: webView)
 
         let tab = Tab(webView: webView)
+        // WebKit performs the popup's load itself (not via our load(_:)), so
+        // without this, saveTabs() — called synchronously right below, before
+        // the popup's own .url KVO or navigation delegate callbacks fire —
+        // would persist it as the start page instead of its real destination.
+        tab.pendingURL = requestedURL
         tabs.append(tab)
         selectTab(tabs.count - 1)
         saveTabs()
@@ -1513,8 +1552,14 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
                var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
                 components.scheme = "https"
                 if let httpsURL = components.url {
+                    // Mutate the original request's URL rather than building a
+                    // fresh URLRequest(url:), which would default to GET and
+                    // silently drop the method/body/headers of e.g. a POSTed
+                    // login or search form.
+                    var request = navigationAction.request
+                    request.url = httpsURL
                     decisionHandler(.cancel, preferences)
-                    webView.load(URLRequest(url: httpsURL))
+                    webView.load(request)
                     return
                 }
             }
@@ -1547,8 +1592,14 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
                let scroll = tab.pendingScroll {
                 tab.pendingScroll = nil
                 if scroll != .zero {
+                    // Guard against the tab having navigated elsewhere during
+                    // the wait — this restores a scroll offset captured for
+                    // the page that had just finished loading, not whatever
+                    // happens to be loaded 600ms later.
+                    let expectedURL = webView.url
                     Task {
                         try? await Task.sleep(for: .milliseconds(600))
+                        guard webView.url == expectedURL else { return }
                         webView.scrollView.setContentOffset(scroll, animated: false)
                     }
                 }

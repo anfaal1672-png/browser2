@@ -24,6 +24,14 @@ struct JoystickView: View {
         }
         .offset(viewModel.joystickOffset)
         .onAppear { viewModel.ensureJoystickOnScreen() }
+        .onDisappear {
+            // Without this, a repeat timer captured by its closures kept firing
+            // repeatKey() for whatever was held when the joystick was hidden
+            // mid-press, even after the view model's own releaseAllKeys() ran.
+            repeatTimer?.invalidate()
+            repeatTimer = nil
+            heldKeys = []
+        }
     }
 
     /// Grip above the stick: drag to reposition the whole joystick.

@@ -95,7 +95,16 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
-                if viewModel.appLockEnabled { isLocked = true }
+                if viewModel.appLockEnabled {
+                    isLocked = true
+                    // A `.sheet` always renders above this view's `.overlay`,
+                    // so the lock screen was invisible (and bypassable) behind
+                    // whichever sheet happened to be open when backgrounding.
+                    showSettings = false
+                    showBookmarks = false
+                    showTabs = false
+                    showHistory = false
+                }
             case .active:
                 if isLocked { unlock() }
             default:
@@ -144,6 +153,16 @@ struct ContentView: View {
                 unlocking = false
             }
         }
+    }
+
+    /// Closes the find bar and clears its query/selection — also called when
+    /// switching/closing/opening tabs so a stale search doesn't linger over
+    /// a page it was never run against.
+    private func dismissFindBar() {
+        guard showFindBar else { return }
+        showFindBar = false
+        findQuery = ""
+        viewModel.clearFindSelection()
     }
 
     /// Small floating controls shown in immersive mode.
@@ -468,12 +487,8 @@ struct ContentView: View {
             Button { viewModel.findInPage(findQuery) } label: {
                 Image(systemName: "chevron.down")
             }
-            Button(loc("完了", "Done")) {
-                showFindBar = false
-                findQuery = ""
-                viewModel.clearFindSelection()
-            }
-            .font(.system(size: 13, weight: .medium))
+            Button(loc("完了", "Done")) { dismissFindBar() }
+                .font(.system(size: 13, weight: .medium))
         }
         .font(.system(size: 14, weight: .medium))
         .tint(.white)
@@ -663,11 +678,13 @@ struct ContentView: View {
                             select: {
                                 viewModel.selectTab(index)
                                 showTabs = false
+                                dismissFindBar()
                             },
                             close: {
                                 withAnimation(.easeInOut(duration: 0.15)) {
                                     viewModel.closeTab(index)
                                 }
+                                dismissFindBar()
                             }
                         )
                     }
@@ -676,6 +693,7 @@ struct ContentView: View {
                     Button {
                         viewModel.newTab()
                         showTabs = false
+                        dismissFindBar()
                     } label: {
                         VStack(spacing: 8) {
                             Image(systemName: "plus")
