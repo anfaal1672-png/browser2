@@ -101,6 +101,28 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     // MARK: - Tabs
 
     /**
+     * Declared before [tabManager] on purpose: [TabManager.start] (called
+     * right below) can call `newTab()` synchronously on a fresh install (no
+     * saved tabs.json yet), and `newTab()` reads [newTabPage] — and, when
+     * that's [NewTabPage.START_PAGE], [bookmarks] via [startPageHtml] — to
+     * decide what to load. Reading either property before its own initializer
+     * has run (i.e. if they were declared after `tabManager` like the rest of
+     * the settings block) would hit an unconstructed `PersistedEnum`/
+     * `mutableStateOf` delegate and crash on the very first launch — the same
+     * class of circular-initialization hazard `tabManager`'s own doc comment
+     * below describes for `webView`.
+     */
+    var newTabPage: NewTabPage by PersistedEnum(prefs, "newTabPage", NewTabPage.entries.toTypedArray(), NewTabPage.HOME)
+
+    private var bookmarksBacking: List<Bookmark> by mutableStateOf(loadBookmarks())
+    var bookmarks: List<Bookmark>
+        get() = bookmarksBacking
+        set(value) {
+            bookmarksBacking = value
+            saveBookmarksToPrefs(value)
+        }
+
+    /**
      * Owns every tab's WebView + persistence; see TabManager.kt.
      *
      * Construction is split into two steps to avoid a circular-initialization
@@ -148,7 +170,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     var hapticsEnabled: Boolean by PersistedBoolean(prefs, "hapticsEnabled", true)
     var joystickUsesArrows: Boolean by PersistedBoolean(prefs, "joystickUsesArrows", false)
     var searchEngine: SearchEngine by PersistedEnum(prefs, "searchEngine", SearchEngine.entries.toTypedArray(), SearchEngine.GOOGLE)
-    var newTabPage: NewTabPage by PersistedEnum(prefs, "newTabPage", NewTabPage.entries.toTypedArray(), NewTabPage.HOME)
+    // newTabPage is declared above, before `tabManager` — see its doc comment.
     var appTheme: Int by PersistedInt(prefs, "appTheme", 0)
     var appLanguage: Int by PersistedInt(prefs, "appLanguage", 0)
     var toolbarOnBottom: Boolean by PersistedBoolean(prefs, "toolbarOnBottom", false)
@@ -389,13 +411,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         prefs.edit().putString("bookmarks", array.toString()).apply()
     }
 
-    private var bookmarksBacking: List<Bookmark> by mutableStateOf(loadBookmarks())
-    var bookmarks: List<Bookmark>
-        get() = bookmarksBacking
-        set(value) {
-            bookmarksBacking = value
-            saveBookmarksToPrefs(value)
-        }
+    // bookmarksBacking/bookmarks are declared above, before `tabManager` — see the doc comment there.
 
     val isCurrentPageBookmarked: Boolean
         get() {

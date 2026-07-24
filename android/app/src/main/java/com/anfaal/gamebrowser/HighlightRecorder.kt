@@ -148,16 +148,23 @@ object HighlightRecorder {
     /** User turned the setting on. Asks the Activity for capture consent
      *  unless a session is already live. */
     fun enable(@Suppress("UNUSED_PARAMETER") context: Context) {
-        wantsBuffering = true
-        if (isBuffering) return
+        if (isBuffering) {
+            wantsBuffering = true
+            return
+        }
         val request = onRequestConsent
         if (request == null) {
             // No Activity to host the system consent dialog right now. Can't
             // silently pre-authorise on Android, so surface that the feature
             // couldn't actually start rather than leaving the UI implying it did.
+            // wantsBuffering stays false here (rather than being set and then
+            // immediately relying on a round-trip through onBufferingUnavailable
+            // to unset it) so internal state can't get stuck "wants" if that
+            // callback is ever unwired (e.g. between onDestroy and a new Activity).
             notifyUnavailable()
             return
         }
+        wantsBuffering = true
         request.invoke()
     }
 
