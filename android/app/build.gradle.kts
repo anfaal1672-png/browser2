@@ -15,7 +15,29 @@ android {
         versionName = "1.0.0"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // Committed to the repo (debug keystores aren't secrets -- this is
+            // the standard, documented practice for teams/CI). Without an
+            // explicit, fixed debug key, Gradle's default debug signing config
+            // auto-generates a NEW random key wherever `~/.android/debug.keystore`
+            // doesn't already exist -- which is every time on a fresh CI runner.
+            // That means each CI-built APK was signed with a different key, so
+            // installing a newer debug build over an older one silently failed
+            // ("App not installed" / signature mismatch) unless the old one was
+            // fully uninstalled first -- easy to miss, and looks identical to
+            // the app just still crashing on relaunch.
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
         }
@@ -43,6 +65,13 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -61,4 +90,8 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.4")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.test:core:1.6.1")
 }

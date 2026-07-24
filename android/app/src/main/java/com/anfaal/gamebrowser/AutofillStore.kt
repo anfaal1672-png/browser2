@@ -61,17 +61,34 @@ object AutofillStore {
         }
     }
 
+    /**
+     * Builds the encrypted store, falling back to a plain (unencrypted)
+     * SharedPreferences file if the AndroidKeyStore-backed master key can't
+     * be created or used. This is deliberately defensive: `MasterKey.Builder`
+     * and `EncryptedSharedPreferences.create` are both documented to throw on
+     * a corrupted/invalidated Keystore key (a known real-world failure mode
+     * for this library, e.g. after a Keystore reset), and this call runs
+     * unconditionally as part of BrowserViewModel's own construction — an
+     * uncaught exception here would crash the entire app on every launch with
+     * no way for the user to recover short of clearing app data. Saved
+     * credentials go temporarily unencrypted on disk in that fallback case,
+     * which is still strictly better than the app being permanently unusable.
+     */
     private fun buildPrefs(context: Context): SharedPreferences {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        return EncryptedSharedPreferences.create(
-            context,
-            PREFS_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
+        return try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                context,
+                PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        } catch (e: Exception) {
+            context.getSharedPreferences("${PREFS_NAME}_fallback", Context.MODE_PRIVATE)
+        }
     }
 
     // MARK: - Credentials
