@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tab
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -34,9 +36,14 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Minimal top toolbar: back/forward/reload + URL bar. Tabs/bookmarks/menu are follow-ups. */
+/** Top toolbar: back/forward/reload + URL bar + tabs + settings. */
 @Composable
-fun BrowserToolbar(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
+fun BrowserToolbar(
+    viewModel: BrowserViewModel,
+    onTabsClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val keyboardController = LocalSoftwareKeyboardController.current
     androidx.compose.foundation.layout.Column(modifier = modifier.background(Color.Black.copy(alpha = 0.75f))) {
         Row(
@@ -82,6 +89,28 @@ fun BrowserToolbar(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
             IconButton(onClick = { viewModel.reload() }) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Reload", tint = Color.White)
             }
+
+            Box {
+                IconButton(onClick = onTabsClick) {
+                    Icon(Icons.Filled.Tab, contentDescription = "Tabs", tint = Color.White)
+                }
+                Text(
+                    text = "${viewModel.tabManager.tabs.size}",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 4.dp, end = 4.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Cyan.copy(alpha = 0.85f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+            }
+
+            IconButton(onClick = onSettingsClick) {
+                Icon(Icons.Filled.Settings, contentDescription = "Settings", tint = Color.White)
+            }
         }
         if (viewModel.isLoading) {
             LinearProgressIndicator(
@@ -109,6 +138,14 @@ fun ControlBar(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
         ControlButton("ドラッグ", active = viewModel.dragLocked, onClick = { viewModel.toggleDragLock() })
         ControlButton("スティック", active = viewModel.joystickVisible, onClick = { viewModel.joystickVisible = !viewModel.joystickVisible })
         ControlButton("キーボード", active = viewModel.keyboardVisible, onClick = { viewModel.keyboardVisible = !viewModel.keyboardVisible })
+        ControlButton(
+            "フルキー",
+            active = viewModel.fullKeyboard,
+            onClick = {
+                viewModel.fullKeyboard = !viewModel.fullKeyboard
+                if (viewModel.fullKeyboard) viewModel.keyboardVisible = true
+            },
+        )
     }
 }
 

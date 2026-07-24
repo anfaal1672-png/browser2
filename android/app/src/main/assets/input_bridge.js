@@ -20,6 +20,7 @@
         dnd: null,
         suppressKeyboard: false,
         compLen: 0,
+        compTarget: null,   // element compLen applies to
     };
 
     function toPage(x, y) {
@@ -372,6 +373,31 @@
             }
         },
 
+        // Live IME composition: replaces the previous uncommitted text in the
+        // focused field with `text` (typed inline, like a real IME). `commit`
+        // finalizes it. Ported from InputBridge.swift's setComposition (minus
+        // iframe forwarding, which this port doesn't support at all — see the
+        // file header).
+        setComposition: function (text, commit) {
+            const el = document.activeElement;
+            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                let end = el.selectionEnd;
+                if (end === null || end === undefined) { end = el.value.length; }
+                const start = Math.max(0, end - (state.compLen || 0));
+                el.setRangeText(text, start, end, 'end');
+                el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+                state.compLen = commit ? 0 : text.length;
+                if (commit) { el.dispatchEvent(new Event('change', { bubbles: true })); }
+            } else if (el && el.isContentEditable) {
+                const sel = window.getSelection();
+                for (let i = 0; i < (state.compLen || 0); i++) {
+                    sel.modify('extend', 'backward', 'character');
+                }
+                document.execCommand('insertText', false, text);
+                state.compLen = commit ? 0 : text.length;
+            }
+        },
+
         setSuppressKeyboard: function (on) {
             state.suppressKeyboard = !!on;
             if (!on) {
@@ -386,6 +412,17 @@
     };
 
     window.__gb = bridge;
+
+    // IME composition length (state.compLen) is per-element; without this,
+    // clicking a different field mid-composition leaves the stale count
+    // around, so the next keystroke there deletes/overwrites that field's
+    // own existing text instead of starting a fresh composition.
+    document.addEventListener('focusin', function (e) {
+        if (state.compTarget !== e.target) {
+            state.compLen = 0;
+            state.compTarget = e.target;
+        }
+    }, true);
 
     document.addEventListener('pointerlockchange', function () {
         post({ type: 'pointerlock', locked: !!document.pointerLockElement });

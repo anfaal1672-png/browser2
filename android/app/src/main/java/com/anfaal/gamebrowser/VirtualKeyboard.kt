@@ -2,14 +2,21 @@ package com.anfaal.gamebrowser
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -23,40 +30,156 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** A single on-screen key: press = keydown, release = keyup, with OS-style auto-repeat. */
+/**
+ * Top-level on-screen keyboard host: the romaji-IME candidate bar (when
+ * active) above either the compact gamepad layout or the full QWERTY layout.
+ * Mirrors VirtualKeyboardView.swift's body.
+ */
+@Composable
+fun VirtualKeyboardHost(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.75f))
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (viewModel.imeActive) {
+            ImeBar(viewModel)
+        }
+        if (viewModel.fullKeyboard) {
+            FullKeyboard(viewModel)
+        } else {
+            GamepadKeyboard(viewModel)
+        }
+    }
+}
+
+/** Composition + kanji candidate bar shown above the keys while the IME is on. */
+@Composable
+private fun ImeBar(viewModel: BrowserViewModel) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (viewModel.imeComposition.isNotEmpty()) {
+                CandidateChip(viewModel.imeComposition) {
+                    viewModel.imeSelectCandidate(viewModel.imeComposition)
+                }
+            }
+            for (candidate in viewModel.imeCandidates) {
+                CandidateChip(candidate) { viewModel.imeSelectCandidate(candidate) }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .clip(CircleShape)
+                .pointerInput(Unit) { detectTapGestures(onTap = { viewModel.imeActive = false }) }
+                .padding(4.dp),
+        ) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = "Close IME",
+                tint = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.width(16.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CandidateChip(text: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color.Cyan.copy(alpha = 0.22f))
+            .pointerInput(text) { detectTapGestures(onTap = { onClick() }) }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Text(text, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+/**
+ * A single on-screen key. Press = keydown, release = keyup, with OS-style
+ * auto-repeat. [sticky] keys (Shift/Ctrl) toggle on tap and stay held until
+ * tapped again. When the built-in romaji IME is active, non-sticky keys feed
+ * [BrowserViewModel]'s IME functions instead of the page directly, mirroring
+ * KeyButton's `imeActive` branch on iOS.
+ *
+ * Pass `modifier = Modifier.weight(1f)` (and `flexible = true`, to skip the
+ * fixed [width]) when placing a key inside a Row that should divide the
+ * remaining space evenly, matching the full-QWERTY rows' flexible keys.
+ */
 @Composable
 fun KeyButton(
     key: GbKey,
     viewModel: BrowserViewModel,
     modifier: Modifier = Modifier,
-    width: androidx.compose.ui.unit.Dp = 44.dp,
+    sticky: Boolean = false,
+    flexible: Boolean = false,
+    width: Dp = 44.dp,
 ) {
     var pressed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var repeatJob: Job? by remember { mutableStateOf(null) }
+    val isActive = pressed || (sticky && viewModel.pressedKeys.contains(key))
 
     Column(
         modifier = modifier
-            .width(width)
+            .let { if (flexible) it else it.width(width) }
             .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(if (pressed) Color.White else Color.White.copy(alpha = 0.14f))
-            .pointerInput(key) {
+            .background(if (isActive) Color.White else Color.White.copy(alpha = 0.14f))
+            .pointerInput(key, sticky) {
                 detectTapGestures(
                     onPress = {
                         pressed = true
-                        viewModel.keyDown(key)
-                        repeatJob = scope.launch {
-                            delay(400)
-                            while (true) {
-                                viewModel.repeatKey(key)
-                                delay(70)
+                        viewModel.hapticLight()
+                        val useIme = viewModel.imeActive && !sticky
+                        if (useIme) {
+                            var imeAction: (() -> Unit)? = null
+                            when (key) {
+                                GbKey.backspace -> imeAction = { viewModel.imeBackspace() }
+                                GbKey.enter -> viewModel.imeConfirm()
+                                GbKey.space -> viewModel.imeSpace()
+                                GbKey.escape -> viewModel.imeActive = false
+                                else -> if (key.key.length == 1) imeAction = { viewModel.imeType(key.key) }
+                            }
+                            val action = imeAction
+                            if (action != null) {
+                                action()
+                                repeatJob = scope.launch {
+                                    delay(400)
+                                    while (true) {
+                                        delay(70)
+                                        action()
+                                    }
+                                }
+                            }
+                        } else if (sticky) {
+                            if (viewModel.pressedKeys.contains(key)) viewModel.keyUp(key) else viewModel.keyDown(key)
+                        } else {
+                            viewModel.keyDown(key)
+                            repeatJob = scope.launch {
+                                delay(400)
+                                while (true) {
+                                    viewModel.repeatKey(key)
+                                    delay(70)
+                                }
                             }
                         }
                         try {
@@ -65,7 +188,7 @@ fun KeyButton(
                             pressed = false
                             repeatJob?.cancel()
                             repeatJob = null
-                            viewModel.keyUp(key)
+                            if (!useIme && !sticky) viewModel.keyUp(key)
                         }
                     },
                 )
@@ -75,9 +198,38 @@ fun KeyButton(
     ) {
         Text(
             text = key.label,
-            color = if (pressed) Color.Black else Color.White,
+            color = if (isActive) Color.Black else Color.White,
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
+        )
+    }
+}
+
+/** Toggles the built-in romaji IME (switches to the full layout for letters). Mirrors VirtualKeyboardView.swift's imeKey. */
+@Composable
+private fun ImeToggleKey(viewModel: BrowserViewModel) {
+    Box(
+        modifier = Modifier
+            .width(40.dp)
+            .height(44.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (viewModel.imeActive) Color.Cyan else Color.White.copy(alpha = 0.14f))
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = {
+                        viewModel.hapticLight()
+                        viewModel.imeActive = !viewModel.imeActive
+                        if (viewModel.imeActive) viewModel.fullKeyboard = true
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "あ",
+            color = if (viewModel.imeActive) Color.Black else Color.Cyan,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
         )
     }
 }
@@ -86,9 +238,7 @@ fun KeyButton(
 @Composable
 fun GamepadKeyboard(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
     Row(
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.55f))
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+        modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -110,6 +260,7 @@ fun GamepadKeyboard(viewModel: BrowserViewModel, modifier: Modifier = Modifier) 
                 KeyButton(GbKey.escape, viewModel, width = 60.dp)
                 KeyButton(GbKey.space, viewModel, width = 84.dp)
                 KeyButton(GbKey.enter, viewModel, width = 52.dp)
+                ImeToggleKey(viewModel)
             }
         }
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -119,6 +270,40 @@ fun GamepadKeyboard(viewModel: BrowserViewModel, modifier: Modifier = Modifier) 
                 KeyButton(GbKey.arrowDown, viewModel)
                 KeyButton(GbKey.arrowRight, viewModel)
             }
+        }
+    }
+}
+
+/** Full QWERTY layout, ported from VirtualKeyboardView.swift's `fullKeyboard`. */
+@Composable
+private fun FullKeyboard(viewModel: BrowserViewModel) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        keyRow(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0").map { GbKey.digit(it) }, viewModel)
+        keyRow("qwertyuiop".map { GbKey.letter(it.toString()) }, viewModel)
+        keyRow("asdfghjkl".map { GbKey.letter(it.toString()) }, viewModel)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            KeyButton(GbKey.shift, viewModel, sticky = true, width = 50.dp)
+            for (c in "zxcvbnm") {
+                KeyButton(GbKey.letter(c.toString()), viewModel, modifier = Modifier.weight(1f), flexible = true)
+            }
+            KeyButton(GbKey.backspace, viewModel, width = 50.dp)
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            KeyButton(GbKey.escape, viewModel, width = 46.dp)
+            KeyButton(GbKey.ctrl, viewModel, sticky = true, width = 46.dp)
+            KeyButton(GbKey.tab, viewModel, width = 40.dp)
+            KeyButton(GbKey.space, viewModel, modifier = Modifier.weight(1f), flexible = true)
+            ImeToggleKey(viewModel)
+            KeyButton(GbKey.enter, viewModel, width = 52.dp)
+        }
+    }
+}
+
+@Composable
+private fun keyRow(keys: List<GbKey>, viewModel: BrowserViewModel) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        for (k in keys) {
+            KeyButton(k, viewModel, modifier = Modifier.weight(1f), flexible = true)
         }
     }
 }

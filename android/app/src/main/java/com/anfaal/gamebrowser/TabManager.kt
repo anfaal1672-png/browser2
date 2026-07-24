@@ -40,13 +40,27 @@ private const val SCROLL_RESTORE_DELAY_MS = 600L
 private const val SAVE_DEBOUNCE_MS = 1000L
 
 private var cachedBridgeScript: String? = null
+private var cachedAutofillScript: String? = null
+private var cachedNotificationScript: String? = null
 
-/** Reads+caches assets/input_bridge.js, mirroring GameWebView.kt's private bridgeScript(). Kept as
- *  its own copy here because that original is file-private and this file must not edit GameWebView.kt. */
 private fun bridgeScript(context: Context): String {
     cachedBridgeScript?.let { return it }
     val text = context.assets.open("input_bridge.js").bufferedReader().use { it.readText() }
     cachedBridgeScript = text
+    return text
+}
+
+private fun autofillBridgeScript(context: Context): String {
+    cachedAutofillScript?.let { return it }
+    val text = context.assets.open("autofill_bridge.js").bufferedReader().use { it.readText() }
+    cachedAutofillScript = text
+    return text
+}
+
+private fun notificationBridgeScript(context: Context): String {
+    cachedNotificationScript?.let { return it }
+    val text = context.assets.open("notification_bridge.js").bufferedReader().use { it.readText() }
+    cachedNotificationScript = text
     return text
 }
 
@@ -143,7 +157,17 @@ class TabManager(
     /** What the UI/ViewModel should treat as "the" WebView right now. */
     val activeWebView: WebView? get() = activeTab?.webView
 
-    init {
+    /**
+     * Loads saved tabs (or starts a fresh one). Deliberately NOT called from
+     * an `init {}` block: `restoreTabs()` -> `selectTab()` calls back into
+     * `viewModel.applyKeyboardSuppression()`, which reads `viewModel.webView`
+     * — whose getter reads `this` TabManager back off `viewModel.tabManager`.
+     * If that ran while `BrowserViewModel` was still in the middle of
+     * assigning its own `tabManager` property, the read would see `null` and
+     * crash. The caller (BrowserViewModel) calls this as a separate statement
+     * once its `tabManager` property has actually been assigned.
+     */
+    fun start() {
         restoreTabs()
     }
 
@@ -170,13 +194,39 @@ class TabManager(
         settings.builtInZoomControls = false
         webView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        webView.addJavascriptInterface(JsBridge(viewModel), "AndroidBridge")
+        webView.addJavascriptInterface(JsBridge(context, viewModel), "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                // Re-inject at document start on every navigation, same as GameWebView.kt's
-                // single-WebView setup (Android has no per-navigation WKUserScript equivalent).
+                // Re-inject at document start on every navigation (Android has no
+                // per-navigation WKUserScript equivalent).
                 view.evaluateJavascript(bridgeScript(context), null)
+                view.evaluateJavascript(autofillBridgeScript(context), null)
+                view.evaluateJavascript(notificationBridgeScript(context), null)
+                if (viewModel.adBlockEnabled) {
+                    view.evaluateJavascript(AdBlocker.cosmeticHidingScript, null)
+                }
+            }
+
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: android.webkit.WebResourceRequest,
+            ): android.webkit.WebResourceResponse? {
+                val requestHost = request.url.host
+                val pageHost = view.url?.let { android.net.Uri.parse(it).host }
+                val isThirdParty = AdBlocker.isThirdPartyHost(requestHost, pageHost)
+                return if (AdBlocker.shouldBlock(
+                        host = requestHost,
+                        isThirdParty = isThirdParty,
+                        adBlockEnabled = viewModel.adBlockEnabled,
+                        useFullAdList = viewModel.useFullAdList,
+                        trackingLevel = viewModel.trackingLevel,
+                    )
+                ) {
+                    AdBlocker.blockedResponse()
+                } else {
+                    null
+                }
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
