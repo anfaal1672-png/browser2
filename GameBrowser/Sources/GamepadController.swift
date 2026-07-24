@@ -55,11 +55,16 @@ final class GamepadController {
               let pad = (GCController.current ?? GCController.controllers().first)?.extendedGamepad
         else { return }
 
-        // Right stick moves the cursor.
+        // Right stick moves the cursor. cursorSpeed was tuned per-tick at
+        // 60Hz; CADisplayLink fires at the display's native rate, so on a
+        // 120Hz ProMotion device this would otherwise move the cursor twice
+        // as fast as intended — scale by the actual frame duration.
+        let frameScale = CGFloat((displayLink?.duration ?? 1.0 / 60.0) * 60)
         let rx = CGFloat(pad.rightThumbstick.xAxis.value)
         let ry = CGFloat(pad.rightThumbstick.yAxis.value)
         if abs(rx) > 0.12 || abs(ry) > 0.12 {
-            viewModel.moveCursor(by: CGSize(width: rx * cursorSpeed, height: -ry * cursorSpeed))
+            viewModel.moveCursor(by: CGSize(width: rx * cursorSpeed * frameScale,
+                                            height: -ry * cursorSpeed * frameScale))
         }
 
         // Left stick + d-pad → movement keys.

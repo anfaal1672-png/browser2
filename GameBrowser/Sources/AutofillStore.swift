@@ -86,8 +86,14 @@ enum AutofillStore {
     }
 
     /// Match saved credentials to a host ("play.example.com" matches
-    /// entries saved for "example.com" and vice versa).
+    /// entries saved for "example.com" and vice versa). Suffix matching is
+    /// boundary-checked on "." so "evilexample.com" can't match a saved
+    /// "example.com" entry just because it happens to share a substring.
     static func credentials(for host: String, in list: [Credential]) -> [Credential] {
-        list.filter { host.hasSuffix($0.domain) || $0.domain.hasSuffix(host) }
+        list.filter {
+            host == $0.domain
+                || host.hasSuffix("." + $0.domain)
+                || $0.domain.hasSuffix("." + host)
+        }
     }
 }

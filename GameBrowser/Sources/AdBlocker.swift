@@ -74,12 +74,20 @@ enum AdBlocker {
         "[class*='outbrain']", "[id*='outbrain']",
     ]
 
+    /// Builds a url-filter regex matching the domain or any of its
+    /// subdomains, anchored right after the domain so an unrelated domain
+    /// that merely starts with the same characters (e.g.
+    /// "amazon-adsystem.company.com") can't match "amazon-adsystem.com".
+    static func domainURLFilter(_ domain: String) -> String {
+        "^https?://([^/]+\\.)?\(domain)(?:[:/]|$)"
+    }
+
     /// Safari content-blocker JSON.
     static var rulesJSON: String {
         var rules: [[String: Any]] = blockedDomains.map { domain in
             [
                 "trigger": [
-                    "url-filter": "^https?://([^/]+\\.)?\(domain)",
+                    "url-filter": domainURLFilter(domain),
                     "load-type": ["third-party"],
                 ],
                 "action": ["type": "block"],
@@ -211,7 +219,7 @@ enum TrackerBlocker {
         // Strict: block them on any load type (may break some sites).
         let rules: [[String: Any]] = trackerDomains.map { domain in
             var trigger: [String: Any] = [
-                "url-filter": "^https?://([^/]+\\.)?\(domain)",
+                "url-filter": AdBlocker.domainURLFilter(domain),
             ]
             if level == .balanced {
                 trigger["load-type"] = ["third-party"]

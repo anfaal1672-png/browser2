@@ -1138,10 +1138,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     func findInPage(_ query: String, forward: Bool = true) {
         guard !query.isEmpty else { return }
-        let escaped = query
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-        js("window.find('\(escaped)', false, \(forward ? "false" : "true"), true, false, true, false)")
+        js("window.find('\(jsEscape(query))', false, \(forward ? "false" : "true"), true, false, true, false)")
     }
 
     func clearFindSelection() {
@@ -1384,11 +1381,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// Insert committed text into the page's focused editable element.
     func insertText(_ text: String) {
         guard !text.isEmpty else { return }
-        let escaped = text
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-            .replacingOccurrences(of: "\n", with: "\\n")
-        js("window.__gb && __gb.insertText('\(escaped)')")
+        js("window.__gb && __gb.insertText('\(jsEscape(text))')")
     }
 
     /// OS-style key auto-repeat: keydown with repeat=true while held.
@@ -1404,11 +1397,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         if shift, keyValue.count == 1, keyValue.first!.isLetter {
             keyValue = keyValue.uppercased()
         }
-        let escaped = keyValue
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
         js("""
-        window.__gb && __gb.key('\(type)', '\(escaped)', '\(key.code)', \(key.keyCode), \
+        window.__gb && __gb.key('\(type)', '\(jsEscape(keyValue))', '\(key.code)', \(key.keyCode), \
         {shift:\(shift), ctrl:\(ctrl), alt:\(alt), repeat:\(repeating)})
         """)
     }

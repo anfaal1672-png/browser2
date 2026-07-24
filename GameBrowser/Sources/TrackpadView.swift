@@ -127,11 +127,25 @@ final class TrackpadUIView: UIView {
 
     private func endTouches(_ touches: Set<UITouch>) {
         guard let viewModel else { return }
+        let wasTwoFingerGesture = isTwoFingerGesture
         activeTouches.removeAll { touches.contains($0) }
         lastPoints = activeTouches.map { $0.location(in: self) }
         cancelLongPress()
 
-        guard activeTouches.isEmpty else { return }
+        guard activeTouches.isEmpty else {
+            // A multi-finger gesture is losing fingers before fully ending
+            // (e.g. releasing one of two scrolling fingers). Don't let the
+            // remaining finger's movement resolve into a stray tap/click
+            // when it eventually lifts too — start it over as a fresh,
+            // non-tappable gesture instead of carrying over stale state.
+            if wasTwoFingerGesture {
+                isTwoFingerGesture = false
+                twoFingerMoved = false
+                touchStartTime = .distantPast
+                totalMovement = 0
+            }
+            return
+        }
 
         if isDragging {
             isDragging = false

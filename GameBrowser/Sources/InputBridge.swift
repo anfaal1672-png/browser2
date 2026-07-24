@@ -236,6 +236,28 @@ enum InputBridge {
             } catch (e) {}
         }
 
+        // Real wheel scrolling walks up from the hovered element to the
+        // nearest scrollable ancestor (an overflow:auto panel, a modal, a
+        // chat log...) before falling back to the window. Without this, an
+        // un-cancelled wheel event always scrolled the outer page even while
+        // hovering a scrollable UI panel inside the game.
+        function scrollableAncestor(el, horizontal) {
+            let node = el;
+            while (node && node !== document.body && node !== document.documentElement) {
+                const style = getComputedStyle(node);
+                const overflow = horizontal
+                    ? style.overflowX
+                    : style.overflowY;
+                const scrollable = overflow === 'auto' || overflow === 'scroll';
+                const hasRoom = horizontal
+                    ? node.scrollWidth > node.clientWidth
+                    : node.scrollHeight > node.clientHeight;
+                if (scrollable && hasRoom) { return node; }
+                node = node.parentElement;
+            }
+            return null;
+        }
+
         // Synthetic arrow keys don't move the caret natively either.
         function moveCaret(el, key, shift) {
             const len = el.value.length;
@@ -376,7 +398,13 @@ enum InputBridge {
                     deltaX: dx, deltaY: dy, deltaMode: 0,
                 }));
                 const notCancelled = target.dispatchEvent(ev);
-                if (notCancelled) { window.scrollBy(dx, dy); }
+                if (notCancelled) {
+                    const vScroll = dy && scrollableAncestor(target, false);
+                    const hScroll = dx && scrollableAncestor(target, true);
+                    if (vScroll) { vScroll.scrollTop += dy; }
+                    if (hScroll) { hScroll.scrollLeft += dx; }
+                    if (!vScroll && !hScroll) { window.scrollBy(dx, dy); }
+                }
             },
 
             key: function (type, key, code, keyCode, mods) {
