@@ -4,3 +4,10 @@ DerivedData/
 *.xcuserdatad/
 xcuserdata/
 .DS_Store
+
+# Android
+android/.gradle/
+android/local.properties
+android/**/build/
+android/.idea/
+*.iml

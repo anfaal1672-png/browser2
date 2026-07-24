@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Cursor-arrow glyph, cyan-to-blue, centered in the safe zone. -->
+    <path
+        android:fillColor="#39D3F5"
+        android:pathData="M40,32 L40,74 L50,63 L58,80 L66,76 L58,60 L72,60 Z" />
+</vector>
