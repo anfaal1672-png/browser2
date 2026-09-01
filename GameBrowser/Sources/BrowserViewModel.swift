@@ -62,6 +62,79 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet { applyKeyboardSuppression() }
     }
 
+    // MARK: - Downloads
+
+    let downloads = DownloadManager()
+    @Published var showDownloads = false
+    /// Mirrored so the toolbar can badge itself: SwiftUI doesn't observe
+    /// objects nested inside an observed object.
+    @Published var activeDownloads = 0
+    private var cancellables = Set<AnyCancellable>()
+
+    // MARK: - Toast
+
+    /// Brief confirmation for things that otherwise happen invisibly.
+    @Published var toastText: String?
+    @Published var toastIcon: String = "checkmark.circle.fill"
+    private var toastTask: Task<Void, Never>?
+
+    func toast(_ text: String, icon: String = "checkmark.circle.fill") {
+        toastText = text
+        toastIcon = icon
+        toastTask?.cancel()
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.4))
+            guard !Task.isCancelled else { return }
+            self?.toastText = nil
+        }
+    }
+
+    // MARK: - Link under the cursor (right-click menu)
+
+    /// Link the page reported under the pointer on a right-click, so the app
+    /// can offer a real menu — WebKit's own long-press menu never appears in
+    /// cursor mode, because the trackpad overlay takes the touches.
+    struct LinkTarget: Equatable {
+        var url: URL
+        var text: String
+    }
+    @Published var linkTarget: LinkTarget?
+
+    func openLinkInNewTab() {
+        guard let target = linkTarget else { return }
+        newTab(url: target.url)
+        toast(loc("新しいタブで開きました", "Opened in a new tab"), icon: "square.on.square")
+        linkTarget = nil
+    }
+
+    func copyLink() {
+        guard let target = linkTarget else { return }
+        UIPasteboard.general.string = target.url.absoluteString
+        toast(loc("リンクをコピーしました", "Link copied"), icon: "doc.on.doc")
+        linkTarget = nil
+    }
+
+    func downloadLink() {
+        guard let target = linkTarget else { return }
+        startDownload(target.url)
+        linkTarget = nil
+    }
+
+    /// Download a URL directly (from the link menu). WebKit fetches it and
+    /// hands back a WKDownload through the delegate below.
+    func startDownload(_ url: URL) {
+        guard !tabs.isEmpty else { return }
+        webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
+            Task { @MainActor in
+                guard let self else { return }
+                download.delegate = self.downloads
+                self.downloads.begin(download, suggested: nil, source: url)
+                self.toast(loc("ダウンロードを開始しました", "Download started"),
+                           icon: "arrow.down.circle.fill")
+            }
+        }
+    }
+
     // MARK: - Focus the game / FPS meter
 
     /// True while the page's game element is blown up to fill the screen.
@@ -1203,6 +1276,27 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let subtitle = loc("ブックマークから開く、または上のバーで検索",
                            "Open a bookmark, or search from the bar above")
 
+        // Recently visited sites, newest first and one entry per host, so the
+        // game you were playing yesterday is one tap away.
+        var seenHosts = Set<String>()
+        let recents = history.reversed().compactMap { entry -> String? in
+            guard let host = URL(string: entry.url)?.host, !seenHosts.contains(host),
+                  !bookmarks.contains(where: { $0.url == entry.url }) else { return nil }
+            seenHosts.insert(host)
+            return """
+            <a class="chip" href="\(Self.escapeHTML(entry.url))">
+              <img src="https://www.google.com/s2/favicons?domain=\
+            \(Self.escapeHTML(host))&sz=32" onerror="this.remove()" alt="">
+              <span>\(Self.escapeHTML(host))</span>
+            </a>
+            """
+        }.prefix(8).joined()
+
+        let recentSection = recents.isEmpty ? "" : """
+        <div class="section">\(loc("最近開いたサイト", "Recently visited"))</div>
+        <div class="chips">\(recents)</div>
+        """
+
         return """
         <!DOCTYPE html><html><head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1227,10 +1321,20 @@ final class BrowserViewModel: NSObject, ObservableObject {
           .icon img { width:28px; height:28px; position:absolute; }
           .name { font-size:12px; max-width:100%; overflow:hidden;
                   text-overflow:ellipsis; white-space:nowrap; }
+          .section { width:100%; max-width:560px; margin:30px 0 12px; font-size:12px;
+                     font-weight:600; letter-spacing:.4px; color:#7b8794; }
+          .chips { display:flex; flex-wrap:wrap; gap:8px; width:100%; max-width:560px; }
+          .chip { display:flex; align-items:center; gap:7px; padding:8px 12px;
+                  border-radius:999px; background:#141b23; border:1px solid #1f2937;
+                  text-decoration:none; color:#c7d2dd; font-size:12px; max-width:100%; }
+          .chip:active { background:#1d2733; }
+          .chip img { width:16px; height:16px; border-radius:4px; }
+          .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         </style></head><body>
         <h1>GameBrowser</h1>
         <p class="sub">\(subtitle)</p>
         <div class="grid">\(tiles)</div>
+        \(recentSection)
         </body></html>
         """
     }
@@ -1381,6 +1485,22 @@ final class BrowserViewModel: NSObject, ObservableObject {
         super.init()
 
         gamepad = GamepadController(viewModel: self)
+        // A finished download is otherwise completely silent.
+        downloads.$lastFinished
+            .compactMap { $0 }
+            .sink { [weak self] name in
+                Task { @MainActor in
+                    self?.toast(loc("保存しました: ", "Saved: ") + name,
+                                icon: "checkmark.circle.fill")
+                }
+            }
+            .store(in: &cancellables)
+        downloads.$activeCount
+            .removeDuplicates()
+            .sink { [weak self] count in
+                Task { @MainActor in self?.activeDownloads = count }
+            }
+            .store(in: &cancellables)
         UNUserNotificationCenter.current().delegate = self
         credentials = AutofillStore.loadCredentials()
         paymentCard = AutofillStore.loadCard()
@@ -2064,6 +2184,12 @@ final class BrowserViewModel: NSObject, ObservableObject {
             if cursorStyle != style { cursorStyle = style }
             let hidden = style == "none"
             if pageHidesCursor != hidden { pageHidesCursor = hidden }
+        } else if type == "link" {
+            if let href = dict["href"] as? String, let url = URL(string: href),
+               url.scheme == "http" || url.scheme == "https" {
+                linkTarget = LinkTarget(url: url, text: (dict["text"] as? String) ?? href)
+                hapticMedium()
+            }
         } else if type == "fps" {
             if let value = dict["value"] as? Int, showFPS { fps = value }
         } else if type == "notification" {
@@ -2158,6 +2284,13 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
             preferences.preferredContentMode = self.desktopMode ? .desktop : .mobile
             preferences.allowsContentJavaScript = self.javaScriptEnabled
 
+            // A link with a `download` attribute: save it instead of trying
+            // to navigate to it, which used to leave a blank tab behind.
+            if navigationAction.shouldPerformDownload {
+                decisionHandler(.download, preferences)
+                return
+            }
+
             // HTTPS-first: rewrite plain-http main-frame navigations.
             if self.httpsOnly,
                navigationAction.targetFrame?.isMainFrame == true,
@@ -2232,6 +2365,39 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
 
             guard let url = webView.url else { return }
             self.recordHistory(url: url, title: webView.title ?? "")
+        }
+    }
+
+    /// Anything WebKit can't display — a zip, an installer, a save file — is
+    /// a download rather than a dead end. This is what made "tap the download
+    /// link and nothing happens" the app's behaviour until now.
+    nonisolated func webView(_ webView: WKWebView,
+                             decidePolicyFor navigationResponse: WKNavigationResponse,
+                             decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
+    }
+
+    nonisolated func webView(_ webView: WKWebView,
+                             navigationAction: WKNavigationAction,
+                             didBecome download: WKDownload) {
+        MainActor.assumeIsolated {
+            download.delegate = downloads
+            downloads.begin(download, suggested: nil, source: navigationAction.request.url)
+            toast(loc("ダウンロードを開始しました", "Download started"),
+                  icon: "arrow.down.circle.fill")
+        }
+    }
+
+    nonisolated func webView(_ webView: WKWebView,
+                             navigationResponse: WKNavigationResponse,
+                             didBecome download: WKDownload) {
+        MainActor.assumeIsolated {
+            download.delegate = downloads
+            downloads.begin(download,
+                            suggested: navigationResponse.response.suggestedFilename,
+                            source: navigationResponse.response.url)
+            toast(loc("ダウンロードを開始しました", "Download started"),
+                  icon: "arrow.down.circle.fill")
         }
     }
 

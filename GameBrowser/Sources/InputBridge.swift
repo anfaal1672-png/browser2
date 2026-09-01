@@ -101,8 +101,9 @@ enum InputBridge {
             } catch (e) { /* PointerEvent unsupported */ }
         }
 
+        // Returns false when the page called preventDefault().
         function fireMouse(type, target, x, y, button, extra) {
-            target.dispatchEvent(new MouseEvent(type, common(x, y, Object.assign({
+            return target.dispatchEvent(new MouseEvent(type, common(x, y, Object.assign({
                 button: button,
                 detail: (type === 'dblclick') ? 2 : 1,
             }, extra))));
@@ -426,7 +427,24 @@ enum InputBridge {
                     fireMouse('click', target, x, y, 0);
                     if (clickCount === 2) { fireMouse('dblclick', target, x, y, 0); }
                 } else if (button === 2) {
-                    fireMouse('contextmenu', target, x, y, 2);
+                    const notCancelled = fireMouse('contextmenu', target, x, y, 2);
+                    // WebKit's own long-press menu never appears in cursor
+                    // mode (the overlay takes the touches), so hand the link
+                    // to native for a real menu — but only when the page
+                    // didn't claim the right-click for itself, which is what
+                    // games do.
+                    if (notCancelled && target && target.closest) {
+                        const anchor = target.closest('a[href]');
+                        if (anchor && anchor.href) {
+                            try {
+                                window.webkit.messageHandlers.gbEvents.postMessage({
+                                    type: 'link',
+                                    href: anchor.href,
+                                    text: (anchor.textContent || '').trim().slice(0, 120),
+                                });
+                            } catch (e) {}
+                        }
+                    }
                 }
             },
 

@@ -104,6 +104,14 @@ struct ContentView: View {
             }
         }
         .background(Color.black.ignoresSafeArea())
+        .overlay(alignment: .bottom) {
+            if let toast = viewModel.toastText {
+                ToastView(text: toast, icon: viewModel.toastIcon)
+                    .padding(.bottom, 92)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: viewModel.toastText)
         .animation(.easeInOut(duration: 0.2), value: viewModel.keyboardVisible)
         .animation(.easeInOut(duration: 0.2), value: viewModel.fullKeyboard)
         .animation(.easeInOut(duration: 0.25), value: viewModel.immersive)
@@ -137,6 +145,20 @@ struct ContentView: View {
         .sheet(isPresented: $showHistory) { historySheet }
         .sheet(isPresented: $viewModel.showProfiles) { ControlProfilesView(viewModel: viewModel) }
         .sheet(isPresented: $viewModel.showPadInspector) { PadButtonInspector(viewModel: viewModel) }
+        .sheet(isPresented: $viewModel.showDownloads) { DownloadsView(downloads: viewModel.downloads) }
+        // Right-clicking a link in cursor mode: WebKit's own menu can't reach
+        // us there, so offer the same actions natively.
+        .confirmationDialog(
+            viewModel.linkTarget?.text ?? "",
+            isPresented: Binding(get: { viewModel.linkTarget != nil },
+                                 set: { if !$0 { viewModel.linkTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button(loc("新しいタブで開く", "Open in new tab")) { viewModel.openLinkInNewTab() }
+            Button(loc("リンクをコピー", "Copy link")) { viewModel.copyLink() }
+            Button(loc("リンク先をダウンロード", "Download linked file")) { viewModel.downloadLink() }
+            Button(loc("キャンセル", "Cancel"), role: .cancel) { viewModel.linkTarget = nil }
+        }
     }
 
     // MARK: - App lock (Face ID)
@@ -333,10 +355,6 @@ struct ContentView: View {
                     .foregroundStyle(viewModel.isCurrentPageBookmarked ? Color.yellow : Color.white)
             }
 
-            Button { showBookmarks = true } label: {
-                Image(systemName: "book")
-            }
-
             Button { showTabs = true } label: {
                 ZStack {
                     Image(systemName: "square.on.square")
@@ -367,6 +385,16 @@ struct ContentView: View {
                     }
                     Button { showHistory = true } label: {
                         Label(loc("履歴", "History"), systemImage: "clock")
+                    }
+                    Button { showBookmarks = true } label: {
+                        Label(loc("ブックマーク", "Bookmarks"), systemImage: "book")
+                    }
+                    Button { viewModel.showDownloads = true } label: {
+                        Label(viewModel.activeDownloads > 0
+                              ? loc("ダウンロード (\(viewModel.activeDownloads)件)",
+                                    "Downloads (\(viewModel.activeDownloads))")
+                              : loc("ダウンロード", "Downloads"),
+                              systemImage: "arrow.down.circle")
                     }
                     Button { viewModel.translatePage() } label: {
                         Label(loc("ページを翻訳", "Translate page"), systemImage: "character.bubble")
@@ -415,7 +443,17 @@ struct ContentView: View {
                     Label(loc("設定", "Settings"), systemImage: "gearshape")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "ellipsis.circle")
+                    // A download running behind a closed menu is otherwise
+                    // completely invisible.
+                    if viewModel.activeDownloads > 0 {
+                        Circle()
+                            .fill(Color.cyan)
+                            .frame(width: 7, height: 7)
+                            .offset(x: 3, y: -2)
+                    }
+                }
             }
         }
         .font(.system(size: 16, weight: .medium))

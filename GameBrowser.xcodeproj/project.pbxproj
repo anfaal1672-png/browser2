@@ -27,6 +27,8 @@
 		AA00000120000013000000AA /* ControlProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000013000000AA /* ControlProfile.swift */; };
 		AA00000120000014000000AA /* ControlPadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000014000000AA /* ControlPadView.swift */; };
 		AA00000120000015000000AA /* ControlProfilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000015000000AA /* ControlProfilesView.swift */; };
+		AA00000120000016000000AA /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000016000000AA /* DownloadManager.swift */; };
+		AA00000120000017000000AA /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000017000000AA /* DownloadsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,6 +54,8 @@
 		AA00000110000013000000AA /* ControlProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlProfile.swift; sourceTree = "<group>"; };
 		AA00000110000014000000AA /* ControlPadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlPadView.swift; sourceTree = "<group>"; };
 		AA00000110000015000000AA /* ControlProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlProfilesView.swift; sourceTree = "<group>"; };
+		AA00000110000016000000AA /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
+		AA00000110000017000000AA /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +109,8 @@
 				AA00000110000013000000AA /* ControlProfile.swift */,
 				AA00000110000014000000AA /* ControlPadView.swift */,
 				AA00000110000015000000AA /* ControlProfilesView.swift */,
+				AA00000110000016000000AA /* DownloadManager.swift */,
+				AA00000110000017000000AA /* DownloadsView.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -206,6 +212,8 @@
 				AA00000120000013000000AA /* ControlProfile.swift in Sources */,
 				AA00000120000014000000AA /* ControlPadView.swift in Sources */,
 				AA00000120000015000000AA /* ControlProfilesView.swift in Sources */,
+				AA00000120000016000000AA /* DownloadManager.swift in Sources */,
+				AA00000120000017000000AA /* DownloadsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
