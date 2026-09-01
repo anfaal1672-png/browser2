@@ -815,7 +815,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         // webView.url would risk replacing the page that is still committed
         // and perfectly readable underneath a failed navigation.
         let failing = (ns.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
-            ?? (ns.userInfo[NSURLErrorFailingURLStringKey] as? String).flatMap { URL(string: $0) }
+            ?? (ns.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap { URL(string: $0) }
         guard let failed = failing,
               failed.scheme == "http" || failed.scheme == "https" else { return }
         // loadSimulatedRequest keeps `failed` as the web view's URL, so the
