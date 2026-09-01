@@ -263,7 +263,26 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// Saved layouts. Every game binds different keys, and the fixed on-screen
     /// keyboard can't reach most of them — so the user builds their own pad.
     @Published var profiles: [ControlProfile] {
-        didSet { ControlProfileStore.saveProfiles(profiles) }
+        // Dragging a button rewrites this on every touch sample, and encoding
+        // every profile to JSON at 120Hz is not free — coalesce the writes.
+        didSet { saveProfilesDebounced() }
+    }
+    private var saveProfilesTask: Task<Void, Never>?
+
+    private func saveProfilesDebounced() {
+        saveProfilesTask?.cancel()
+        let snapshot = profiles
+        saveProfilesTask = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            ControlProfileStore.saveProfiles(snapshot)
+        }
+    }
+
+    /// Write immediately — the app may not get another chance.
+    private func saveProfilesNow() {
+        saveProfilesTask?.cancel()
+        ControlProfileStore.saveProfiles(profiles)
     }
     @Published var activeProfileID: UUID? {
         didSet { ControlProfileStore.saveActive(activeProfileID) }
@@ -554,15 +573,16 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// Turbo: re-press on an interval for games that expect mashing.
     private func startTurbo(_ button: PadButton) {
         stopTurbo(button.id)
-        turboTimers[button.id] = Timer.scheduledTimer(
-            withTimeInterval: 0.09, repeats: true
-        ) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.09, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.disengage(button)
                 self.engage(button)
             }
         }
+        // .common, so mashing keeps firing while a gesture is tracking.
+        RunLoop.main.add(timer, forMode: .common)
+        turboTimers[button.id] = timer
     }
 
     private func stopTurbo(_ id: UUID) {
@@ -1380,7 +1400,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.saveTabs() }
+            Task { @MainActor in
+                self?.saveTabs()
+                self?.saveProfilesNow()
+            }
         }
     }
 
