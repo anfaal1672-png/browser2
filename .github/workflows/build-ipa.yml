@@ -1,12 +1,14 @@
 name: Build unsigned IPA
 
 # Public repo: GitHub-hosted macOS runners are unlimited/free, so every push
-# to this branch triggers a build automatically. workflow_dispatch is kept
-# for on-demand re-runs.
+# to any branch triggers a build automatically -- the same policy
+# codemagic.yaml already uses (branch pattern "*"). Pinning this to one
+# branch meant work on any other branch produced no IPA to download and no
+# compile check. workflow_dispatch is kept for on-demand re-runs.
 on:
   push:
     branches:
-      - claude/ios-browser-game-emulator-0j85nx
+      - "**"
   workflow_dispatch: {}
 
 jobs:
