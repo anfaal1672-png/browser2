@@ -29,15 +29,24 @@ struct ContentView: View {
 
                     if viewModel.cursorMode {
                         TrackpadView(viewModel: viewModel)
-                        if !viewModel.pointerLocked && !viewModel.pageHidesCursor {
-                            CursorView(
-                                position: viewModel.cursorPosition,
-                                pressed: viewModel.dragLocked || viewModel.mouseButtonDown,
-                                style: viewModel.cursorStyle
-                            )
-                            .opacity(viewModel.cursorFaded ? 0.35 : 1)
-                            .animation(.easeInOut(duration: 0.4), value: viewModel.cursorFaded)
-                        }
+                    }
+
+                    // The user's own buttons sit above the trackpad, so they
+                    // take their own touches first, and below the cursor, so
+                    // the pointer is never hidden behind one.
+                    if viewModel.pcMode && viewModel.padVisible {
+                        ControlPadOverlay(viewModel: viewModel)
+                    }
+
+                    if viewModel.cursorMode
+                        && !viewModel.pointerLocked && !viewModel.pageHidesCursor {
+                        CursorView(
+                            position: viewModel.cursorPosition,
+                            pressed: viewModel.dragLocked || viewModel.mouseButtonDown,
+                            style: viewModel.cursorStyle
+                        )
+                        .opacity(viewModel.cursorFaded ? 0.35 : 1)
+                        .animation(.easeInOut(duration: 0.4), value: viewModel.cursorFaded)
                     }
                 }
                 .overlay(alignment: .trailing) {
@@ -58,6 +67,13 @@ struct ContentView: View {
                 }
                 .overlay(alignment: .topLeading) {
                     if viewModel.highlightsEnabled { highlightButton }
+                }
+                .overlay(alignment: .top) {
+                    if viewModel.padEditing {
+                        PadEditBar(viewModel: viewModel)
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
             }
             .clipped()
@@ -116,6 +132,8 @@ struct ContentView: View {
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
         .sheet(isPresented: $showTabs) { tabsSheet }
         .sheet(isPresented: $showHistory) { historySheet }
+        .sheet(isPresented: $viewModel.showProfiles) { ControlProfilesView(viewModel: viewModel) }
+        .sheet(isPresented: $viewModel.showPadInspector) { PadButtonInspector(viewModel: viewModel) }
     }
 
     // MARK: - App lock (Face ID)
@@ -319,6 +337,9 @@ struct ContentView: View {
                     Label(loc("ページを翻訳", "Translate page"), systemImage: "character.bubble")
                 }
                 .disabled(viewModel.currentURL == nil)
+                Button { viewModel.showProfiles = true } label: {
+                    Label(loc("コントロール設定", "Controls"), systemImage: "gamecontroller")
+                }
                 if viewModel.highlightsEnabled {
                     Button { viewModel.saveHighlight() } label: {
                         Label(loc("ハイライトを保存(直近15秒)", "Save highlight (last 15s)"), systemImage: "video.badge.checkmark")
@@ -609,6 +630,24 @@ struct ContentView: View {
                     viewModel.joystickVisible.toggle()
                 }
             }
+
+            // Tap: show/hide the custom pad. Long press: open the editor.
+            controlButton(
+                icon: "circle.grid.cross.fill",
+                label: loc("パッド", "Pads"),
+                active: viewModel.padVisible
+            ) {
+                viewModel.padVisible.toggle()
+                if viewModel.padVisible && viewModel.activeProfile == nil {
+                    viewModel.showProfiles = true
+                }
+            }
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                    viewModel.hapticMedium()
+                    viewModel.showProfiles = true
+                }
+            )
 
             controlButton(
                 icon: "keyboard",

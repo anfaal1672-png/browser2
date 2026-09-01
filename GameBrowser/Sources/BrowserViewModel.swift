@@ -157,6 +157,284 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet { UserDefaults.standard.set(hapticsEnabled, forKey: "hapticsEnabled") }
     }
 
+    // MARK: - Custom control pads
+
+    /// Saved layouts. Every game binds different keys, and the fixed on-screen
+    /// keyboard can't reach most of them — so the user builds their own pad.
+    @Published var profiles: [ControlProfile] {
+        didSet { ControlProfileStore.saveProfiles(profiles) }
+    }
+    @Published var activeProfileID: UUID? {
+        didSet { ControlProfileStore.saveActive(activeProfileID) }
+    }
+    /// Draw the active profile's buttons over the page.
+    @Published var padVisible: Bool {
+        didSet {
+            UserDefaults.standard.set(padVisible, forKey: "padVisible")
+            if !padVisible {
+                releasePadButtons()
+                padEditing = false
+            }
+        }
+    }
+    /// Arrange mode: buttons are draggable and tapping one opens its settings.
+    @Published var padEditing: Bool = false {
+        didSet { if padEditing { releasePadButtons() } }
+    }
+    /// Buttons currently latched down (sticky).
+    @Published var padLatched: Set<UUID> = []
+    @Published var selectedPadButton: UUID?
+    @Published var showPadInspector = false
+    @Published var showProfiles = false
+
+    /// host → profile id, so a game's controls come back on their own.
+    private var siteProfiles: [String: String] = ControlProfileStore.loadAssignments()
+    private var turboTimers: [UUID: Timer] = [:]
+
+    var activeProfile: ControlProfile? { profiles.first { $0.id == activeProfileID } }
+
+    private func updateProfile(_ mutate: (inout ControlProfile) -> Void) {
+        guard let id = activeProfileID,
+              let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&profiles[index])
+    }
+
+    func activateProfile(_ id: UUID?) {
+        releasePadButtons()
+        activeProfileID = id
+        selectedPadButton = nil
+        if let profile = activeProfile {
+            joystickUsesArrows = profile.joystickArrows
+            if profile.showJoystick { joystickVisible = true }
+            padVisible = true
+        }
+        hapticSelection()
+    }
+
+    func createProfile() {
+        let profile = ControlProfile(name: loc("新しいプロファイル", "New profile"))
+        profiles.append(profile)
+        activateProfile(profile.id)
+    }
+
+    func duplicateProfile(_ id: UUID) {
+        guard let source = profiles.first(where: { $0.id == id }) else { return }
+        var copy = source
+        copy.id = UUID()
+        copy.name = source.name + loc(" のコピー", " copy")
+        // Fresh button ids, or the two profiles would share latch/turbo state.
+        copy.buttons = source.buttons.map { button in
+            var fresh = button
+            fresh.id = UUID()
+            return fresh
+        }
+        profiles.append(copy)
+        activateProfile(copy.id)
+    }
+
+    func deleteProfile(_ id: UUID) {
+        profiles.removeAll { $0.id == id }
+        siteProfiles = siteProfiles.filter { $0.value != id.uuidString }
+        ControlProfileStore.saveAssignments(siteProfiles)
+        if activeProfileID == id { activateProfile(profiles.first?.id) }
+    }
+
+    func renameProfile(_ id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = profiles.firstIndex(where: { $0.id == id })
+        else { return }
+        profiles[index].name = trimmed
+    }
+
+    func addPresetProfiles() {
+        profiles.append(contentsOf: ControlProfile.presets())
+        hapticMedium()
+    }
+
+    // MARK: Buttons
+
+    func addPadButton() {
+        guard activeProfileID != nil else { return }
+        let new = PadButton(keys: ["Space"], x: 0.5, y: 0.5)
+        updateProfile { $0.buttons.append(new) }
+        selectedPadButton = new.id
+        showPadInspector = true
+        hapticLight()
+    }
+
+    func movePadButton(_ id: UUID, to point: CGPoint) {
+        updateProfile { profile in
+            guard let index = profile.buttons.firstIndex(where: { $0.id == id }) else { return }
+            profile.buttons[index].x = min(max(point.x, 0.04), 0.96)
+            profile.buttons[index].y = min(max(point.y, 0.04), 0.96)
+        }
+    }
+
+    func updatePadButton(_ id: UUID, _ mutate: (inout PadButton) -> Void) {
+        updateProfile { profile in
+            guard let index = profile.buttons.firstIndex(where: { $0.id == id }) else { return }
+            mutate(&profile.buttons[index])
+        }
+    }
+
+    func deletePadButton(_ id: UUID) {
+        releasePadButton(id)
+        updateProfile { $0.buttons.removeAll { $0.id == id } }
+        if selectedPadButton == id { selectedPadButton = nil }
+    }
+
+    /// Several keys on one button are held together — Shift+W is sprint.
+    func addBinding(_ name: String, to id: UUID) {
+        updatePadButton(id) { button in
+            if PadKeyName.mouseNames.contains(name) {
+                button.mouseButton = (name == PadKeyName.rightClick) ? 2 : 0
+                button.keys = []
+            } else {
+                button.mouseButton = nil
+                if !button.keys.contains(name) { button.keys.append(name) }
+            }
+        }
+        hapticLight()
+    }
+
+    func removeBinding(_ name: String, from id: UUID) {
+        updatePadButton(id) { button in
+            if PadKeyName.mouseNames.contains(name) {
+                button.mouseButton = nil
+            } else {
+                button.keys.removeAll { $0 == name }
+            }
+        }
+    }
+
+    // MARK: Per-site assignment
+
+    func siteProfileID(for host: String) -> UUID? {
+        siteProfiles[host].flatMap { UUID(uuidString: $0) }
+    }
+
+    func siteProfileName(for host: String) -> String? {
+        guard let id = siteProfileID(for: host) else { return nil }
+        return profiles.first { $0.id == id }?.name
+    }
+
+    func assignCurrentProfileToSite(_ pinned: Bool) {
+        guard let host = currentURL?.host else { return }
+        if pinned, let id = activeProfileID {
+            siteProfiles[host] = id.uuidString
+        } else {
+            siteProfiles.removeValue(forKey: host)
+        }
+        ControlProfileStore.saveAssignments(siteProfiles)
+        hapticLight()
+    }
+
+    /// Bring back the profile pinned to this site, if it isn't already on.
+    fileprivate func applySiteProfile(for url: URL?) {
+        guard let host = url?.host,
+              let id = siteProfileID(for: host),
+              id != activeProfileID,
+              profiles.contains(where: { $0.id == id }) else { return }
+        activateProfile(id)
+    }
+
+    // MARK: Physical controller mapping
+
+    func gamepadBinding(_ slot: GamepadSlot) -> String {
+        activeProfile?.gamepadKey(slot) ?? slot.defaultKey
+    }
+
+    func setGamepadBinding(_ slot: GamepadSlot, to name: String) {
+        updateProfile { $0.gamepadMap[slot.rawValue] = name }
+        hapticLight()
+    }
+
+    func resetGamepadMapping() {
+        updateProfile { $0.gamepadMap = [:] }
+        hapticLight()
+    }
+
+    // MARK: Sending
+
+    func padPress(_ button: PadButton) {
+        hapticLight()
+        if button.sticky {
+            if padLatched.contains(button.id) {
+                releasePadButton(button.id)
+            } else {
+                padLatched.insert(button.id)
+                engage(button)
+                if button.turbo { startTurbo(button) }
+            }
+            return
+        }
+        engage(button)
+        if button.turbo { startTurbo(button) }
+    }
+
+    func padRelease(_ button: PadButton) {
+        guard !button.sticky else { return }   // a latched button waits for the next tap
+        stopTurbo(button.id)
+        disengage(button)
+    }
+
+    private func engage(_ button: PadButton) {
+        if let mouse = button.mouseButton {
+            mouseDown(button: mouse)
+            return
+        }
+        for name in button.keys {
+            if let key = KeyCatalog.key(name) { keyDown(key) }
+        }
+    }
+
+    private func disengage(_ button: PadButton) {
+        if let mouse = button.mouseButton {
+            mouseUp(button: mouse)
+            return
+        }
+        // Reverse order so a modifier in a combo is released last.
+        for name in button.keys.reversed() {
+            if let key = KeyCatalog.key(name) { keyUp(key) }
+        }
+    }
+
+    /// Turbo: re-press on an interval for games that expect mashing.
+    private func startTurbo(_ button: PadButton) {
+        stopTurbo(button.id)
+        turboTimers[button.id] = Timer.scheduledTimer(
+            withTimeInterval: 0.09, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.disengage(button)
+                self.engage(button)
+            }
+        }
+    }
+
+    private func stopTurbo(_ id: UUID) {
+        turboTimers[id]?.invalidate()
+        turboTimers.removeValue(forKey: id)
+    }
+
+    private func releasePadButton(_ id: UUID) {
+        stopTurbo(id)
+        padLatched.remove(id)
+        if let button = activeProfile?.buttons.first(where: { $0.id == id }) { disengage(button) }
+    }
+
+    /// Drop everything the pads are holding — hiding them, editing, switching
+    /// tabs or profiles must never leave a key or mouse button stuck down.
+    func releasePadButtons() {
+        for (_, timer) in turboTimers { timer.invalidate() }
+        turboTimers.removeAll()
+        let latched = padLatched
+        padLatched.removeAll()
+        guard let profile = activeProfile else { return }
+        for button in profile.buttons where latched.contains(button.id) { disengage(button) }
+    }
+
     // MARK: - Security settings
 
     /// Upgrade http:// navigations to https:// (HTTPS-first).
@@ -904,6 +1182,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
         highlightsEnabled = defaults.bool(forKey: "highlightsEnabled")
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool
             ?? defaults.bool(forKey: "pcMode")
+        profiles = ControlProfileStore.loadProfiles()
+        activeProfileID = ControlProfileStore.loadActive()
+        padVisible = defaults.bool(forKey: "padVisible")
         if let data = defaults.data(forKey: "history"),
            let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
             history = saved
@@ -1247,6 +1528,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
                     self?.pageHidesCursor = false   // reset on navigation
                     self?.cursorStyle = "auto"
                     self?.dismissAutofill()
+                    self?.applySiteProfile(for: wv.url)
                 }
             },
             webView.observe(\.title) { [weak self] wv, _ in
@@ -1451,6 +1733,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func releaseAllKeys() {
         for key in pressedKeys { sendKey(type: "keyup", key) }
         pressedKeys.removeAll()
+        // Latched pad buttons were holding some of those — and possibly a
+        // mouse button, which the loop above doesn't cover.
+        releasePadButtons()
     }
 
     func tapKey(_ key: InputBridge.Key) {
