@@ -565,6 +565,18 @@ final class BrowserViewModel: NSObject, ObservableObject {
         hapticLight()
     }
 
+    /// Back to the values a new profile starts with — the buttons themselves
+    /// and the controller mapping are left alone.
+    func resetProfileTuning() {
+        let fresh = ControlProfile(name: "")
+        updateProfile { profile in
+            profile.padOpacity = fresh.padOpacity
+            profile.cursorSensitivity = fresh.cursorSensitivity
+            profile.autoFocusGame = fresh.autoFocusGame
+        }
+        hapticMedium()
+    }
+
     /// Copy the active profile as JSON — a layout is worth sharing, and worth
     /// keeping somewhere that survives a reinstall.
     @discardableResult
@@ -1426,40 +1438,155 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     // MARK: - Init
 
+    /// Every setting's factory value, in one place: launch reads them here and
+    /// so does "reset", so the two can't drift apart.
+    enum Default {
+        static let pcMode = false            // phone mode on a fresh install
+        static let cursorSensitivity = 1.4
+        static let scrollSpeed = 700.0
+        static let controlScheme = ControlScheme.classic
+        static let hapticsEnabled = true
+        static let forceZoom = true
+        static let showFPS = false
+        static let joystickUsesArrows = false
+        static let showScrollButtons = true
+        static let appLanguage = 0           // follow the system
+        static let appTheme = 0              // dark
+        static let toolbarOnBottom = false
+        static let searchEngine = SearchEngine.google
+        static let newTabPage = NewTabPage.home
+        static let autofillEnabled = true
+        static let adBlockEnabled = true
+        static let useFullAdList = false
+        static let trackingLevel = TrackerBlocker.Level.balanced
+        static let appLockEnabled = false
+        static let fraudWarning = true
+        static let httpsOnly = true
+        static let blockPopups = false
+        static let javaScriptEnabled = true
+        static let capturePolicy = CapturePolicy.ask
+        static let webNotificationsEnabled = true
+        static let highlightsEnabled = false
+        static let keepAliveInBackground = false
+    }
+
+    // MARK: - Resetting settings
+
+    /// One settings card's worth of options.
+    enum SettingsSection: CaseIterable {
+        case browserMode, controls, searchTabs, appearance, autofill
+        case security, permissions, highlights, background
+    }
+
+    /// Put one section back to its factory values, with feedback.
+    ///
+    /// Browsing data is deliberately left alone — bookmarks, history, saved
+    /// passwords and cards, open tabs and control profiles all survive. This
+    /// resets settings, not the user's own stuff.
+    func resetSettings(_ section: SettingsSection) {
+        applyDefaults(to: section)
+        hapticMedium()
+    }
+
+    func resetAllSettings() {
+        for section in SettingsSection.allCases { applyDefaults(to: section) }
+        hapticMedium()
+    }
+
+    private func applyDefaults(to section: SettingsSection) {
+        switch section {
+        case .browserMode:
+            pcMode = Default.pcMode
+            desktopMode = Default.pcMode
+        case .controls:
+            controlScheme = Default.controlScheme
+            cursorSensitivity = Default.cursorSensitivity
+            scrollSpeed = Default.scrollSpeed
+            hapticsEnabled = Default.hapticsEnabled
+            forceZoom = Default.forceZoom
+            showFPS = Default.showFPS
+            joystickUsesArrows = Default.joystickUsesArrows
+            resetJoystickPosition()
+        case .searchTabs:
+            searchEngine = Default.searchEngine
+            newTabPage = Default.newTabPage
+        case .appearance:
+            // Theme lives in @AppStorage; writing the same key updates it.
+            UserDefaults.standard.set(Default.appTheme, forKey: "appTheme")
+            appLanguage = Default.appLanguage
+            toolbarOnBottom = Default.toolbarOnBottom
+            showScrollButtons = Default.showScrollButtons
+            desktopMode = pcMode   // its factory value is "match the mode"
+        case .autofill:
+            autofillEnabled = Default.autofillEnabled
+        case .security:
+            adBlockEnabled = Default.adBlockEnabled
+            useFullAdList = Default.useFullAdList
+            trackingLevel = Default.trackingLevel
+            appLockEnabled = Default.appLockEnabled
+            fraudWarning = Default.fraudWarning
+            httpsOnly = Default.httpsOnly
+            blockPopups = Default.blockPopups
+            javaScriptEnabled = Default.javaScriptEnabled
+        case .permissions:
+            capturePolicy = Default.capturePolicy
+            webNotificationsEnabled = Default.webNotificationsEnabled
+        case .highlights:
+            highlightsEnabled = Default.highlightsEnabled
+        case .background:
+            keepAliveInBackground = Default.keepAliveInBackground
+        }
+    }
+
     override init() {
         let defaults = UserDefaults.standard
         let savedSensitivity = defaults.double(forKey: "cursorSensitivity")
-        cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
-        pcMode = defaults.bool(forKey: "pcMode")   // phone mode by default
-        showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool ?? true
-        appLanguage = defaults.integer(forKey: "appLanguage")
-        toolbarOnBottom = defaults.bool(forKey: "toolbarOnBottom")
-        joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
-        hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool ?? true
-        controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme")) ?? .classic
-        httpsOnly = defaults.object(forKey: "httpsOnly") as? Bool ?? true
-        fraudWarning = defaults.object(forKey: "fraudWarning") as? Bool ?? true
-        blockPopups = defaults.object(forKey: "blockPopups") as? Bool ?? false
-        javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool ?? true
-        capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
-        adBlockEnabled = defaults.object(forKey: "adBlockEnabled") as? Bool ?? true
+        cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : Default.cursorSensitivity
+        pcMode = defaults.object(forKey: "pcMode") as? Bool ?? Default.pcMode
+        showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool
+            ?? Default.showScrollButtons
+        appLanguage = defaults.object(forKey: "appLanguage") as? Int ?? Default.appLanguage
+        toolbarOnBottom = defaults.object(forKey: "toolbarOnBottom") as? Bool
+            ?? Default.toolbarOnBottom
+        joystickUsesArrows = defaults.object(forKey: "joystickUsesArrows") as? Bool
+            ?? Default.joystickUsesArrows
+        hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool
+            ?? Default.hapticsEnabled
+        controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme"))
+            ?? Default.controlScheme
+        httpsOnly = defaults.object(forKey: "httpsOnly") as? Bool ?? Default.httpsOnly
+        fraudWarning = defaults.object(forKey: "fraudWarning") as? Bool ?? Default.fraudWarning
+        blockPopups = defaults.object(forKey: "blockPopups") as? Bool ?? Default.blockPopups
+        javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool
+            ?? Default.javaScriptEnabled
+        capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy"))
+            ?? Default.capturePolicy
+        adBlockEnabled = defaults.object(forKey: "adBlockEnabled") as? Bool
+            ?? Default.adBlockEnabled
         if let saved = defaults.object(forKey: "trackingLevel") as? Int {
-            trackingLevel = TrackerBlocker.Level(rawValue: saved) ?? .balanced
+            trackingLevel = TrackerBlocker.Level(rawValue: saved) ?? Default.trackingLevel
         } else {
-            trackingLevel = .balanced   // on by default
+            trackingLevel = Default.trackingLevel   // on by default
         }
-        searchEngine = SearchEngine(rawValue: defaults.integer(forKey: "searchEngine")) ?? .google
-        newTabPage = NewTabPage(rawValue: defaults.integer(forKey: "newTabPage")) ?? .home
-        appLockEnabled = defaults.bool(forKey: "appLockEnabled")
-        autofillEnabled = defaults.object(forKey: "autofillEnabled") as? Bool ?? true
-        useFullAdList = defaults.bool(forKey: "useFullAdList")
-        webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
-        keepAliveInBackground = defaults.bool(forKey: "keepAliveInBackground")
-        highlightsEnabled = defaults.bool(forKey: "highlightsEnabled")
+        searchEngine = SearchEngine(rawValue: defaults.integer(forKey: "searchEngine"))
+            ?? Default.searchEngine
+        newTabPage = NewTabPage(rawValue: defaults.integer(forKey: "newTabPage"))
+            ?? Default.newTabPage
+        appLockEnabled = defaults.object(forKey: "appLockEnabled") as? Bool
+            ?? Default.appLockEnabled
+        autofillEnabled = defaults.object(forKey: "autofillEnabled") as? Bool
+            ?? Default.autofillEnabled
+        useFullAdList = defaults.object(forKey: "useFullAdList") as? Bool ?? Default.useFullAdList
+        webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool
+            ?? Default.webNotificationsEnabled
+        keepAliveInBackground = defaults.object(forKey: "keepAliveInBackground") as? Bool
+            ?? Default.keepAliveInBackground
+        highlightsEnabled = defaults.object(forKey: "highlightsEnabled") as? Bool
+            ?? Default.highlightsEnabled
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool
-            ?? defaults.bool(forKey: "pcMode")
-        forceZoom = defaults.object(forKey: "forceZoom") as? Bool ?? true
-        showFPS = defaults.bool(forKey: "showFPS")
+            ?? (defaults.object(forKey: "pcMode") as? Bool ?? Default.pcMode)
+        forceZoom = defaults.object(forKey: "forceZoom") as? Bool ?? Default.forceZoom
+        showFPS = defaults.object(forKey: "showFPS") as? Bool ?? Default.showFPS
         profiles = ControlProfileStore.loadProfiles()
         activeProfileID = ControlProfileStore.loadActive()
         padVisible = defaults.bool(forKey: "padVisible")
@@ -1988,7 +2115,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
     /// Smooth-scroll speed in px/s while a scroll button is held (user setting).
     @Published var scrollSpeed: Double = {
         let saved = UserDefaults.standard.double(forKey: "scrollSpeed")
-        return saved > 0 ? saved : 700
+        return saved > 0 ? saved : Default.scrollSpeed
     }() {
         didSet { UserDefaults.standard.set(scrollSpeed, forKey: "scrollSpeed") }
     }

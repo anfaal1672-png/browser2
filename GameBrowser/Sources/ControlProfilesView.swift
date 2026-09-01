@@ -203,6 +203,11 @@ struct ControlProfilesView: View {
                 }
 
                 divider
+                smallButton(loc("この設定を初期値に戻す", "Reset these to defaults"),
+                            icon: "arrow.counterclockwise") {
+                    viewModel.resetProfileTuning()
+                    transient(loc("初期値に戻しました", "Reset to defaults"))
+                }
                 HStack(spacing: 10) {
                     smallButton(loc("コピー", "Copy"), icon: "doc.on.doc") {
                         transient(viewModel.copyActiveProfile()

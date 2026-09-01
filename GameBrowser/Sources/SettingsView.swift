@@ -12,6 +12,10 @@ struct SettingsView: View {
     @State private var clearHistoryToo = false
     @State private var showCardEditor = false
     @State private var dataCleared = false
+    /// Title of the section whose reset button was just tapped, so it can
+    /// show a checkmark for a moment.
+    @State private var recentlyReset: String?
+    @State private var confirmResetAll = false
 
     private let accent = Color.cyan
 
@@ -35,6 +39,7 @@ struct SettingsView: View {
                     dataCard
                     highlightsCard
                     backgroundCard
+                    resetAllCard
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 30)
@@ -42,7 +47,20 @@ struct SettingsView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showCardEditor) { cardEditor }
+        .alert(loc("すべての設定をリセットしますか?", "Reset all settings?"),
+               isPresented: $confirmResetAll) {
+            Button(loc("リセット", "Reset"), role: .destructive) {
+                viewModel.resetAllSettings()
+                markReset(allSettingsTitle)
+            }
+            Button(loc("キャンセル", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(loc("ブックマーク・履歴・保存したパスワード・開いているタブ・コントロールプロファイルはそのまま残ります。",
+                     "Bookmarks, history, saved passwords, open tabs and control profiles are kept."))
+        }
     }
+
+    private var allSettingsTitle: String { loc("設定のリセット", "Reset settings") }
 
     // MARK: - Header
 
@@ -69,7 +87,8 @@ struct SettingsView: View {
     // MARK: - Cards
 
     private var browserModeCard: some View {
-        card(icon: "gamecontroller.fill", tint: .cyan, title: loc("ブラウザモード", "Browser mode")) {
+        card(icon: "gamecontroller.fill", tint: .cyan, title: loc("ブラウザモード", "Browser mode"),
+             reset: .browserMode) {
             HStack(spacing: 10) {
                 modeButton(label: loc("スマホ", "Phone"), icon: "hand.tap.fill", selected: !viewModel.pcMode) {
                     viewModel.pcMode = false
@@ -87,7 +106,8 @@ struct SettingsView: View {
     }
 
     private var controlsCard: some View {
-        card(icon: "cursorarrow.motionlines", tint: .blue, title: loc("操作", "Controls")) {
+        card(icon: "cursorarrow.motionlines", tint: .blue, title: loc("操作", "Controls"),
+             reset: .controls) {
             labeled(loc("操作スキーム", "Control scheme")) {
                 chips(BrowserViewModel.ControlScheme.allCases.map { ($0, $0.label) },
                       selection: $viewModel.controlScheme)
@@ -139,7 +159,8 @@ struct SettingsView: View {
     }
 
     private var searchCard: some View {
-        card(icon: "magnifyingglass", tint: .orange, title: loc("検索とタブ", "Search & tabs")) {
+        card(icon: "magnifyingglass", tint: .orange, title: loc("検索とタブ", "Search & tabs"),
+             reset: .searchTabs) {
             labeled(loc("検索エンジン", "Search engine")) {
                 chips(BrowserViewModel.SearchEngine.allCases.map { ($0, $0.label) },
                       selection: $viewModel.searchEngine)
@@ -156,7 +177,8 @@ struct SettingsView: View {
     }
 
     private var appearanceCard: some View {
-        card(icon: "paintbrush.fill", tint: .purple, title: loc("外観", "Appearance")) {
+        card(icon: "paintbrush.fill", tint: .purple, title: loc("外観", "Appearance"),
+             reset: .appearance) {
             labeled(loc("テーマ", "Theme")) {
                 chips([(0, loc("ダーク", "Dark")), (1, loc("ライト", "Light")), (2, loc("システム", "System"))],
                       selection: $appTheme)
@@ -176,7 +198,8 @@ struct SettingsView: View {
     }
 
     private var autofillCard: some View {
-        card(icon: "key.fill", tint: .yellow, title: loc("自動入力", "Autofill")) {
+        card(icon: "key.fill", tint: .yellow, title: loc("自動入力", "Autofill"),
+             reset: .autofill) {
             toggleRow(loc("パスワード・カードの自動入力", "Autofill passwords & cards"), isOn: $viewModel.autofillEnabled)
 
             if !viewModel.credentials.isEmpty {
@@ -222,7 +245,8 @@ struct SettingsView: View {
     }
 
     private var securityCard: some View {
-        card(icon: "shield.fill", tint: .green, title: loc("セキュリティ", "Security")) {
+        card(icon: "shield.fill", tint: .green, title: loc("セキュリティ", "Security"),
+             reset: .security) {
             toggleRow(loc("広告ブロック", "Ad blocking"), isOn: $viewModel.adBlockEnabled)
             if viewModel.adBlockEnabled {
                 toggleRow(loc("強力な広告ブロック(EasyList)", "Strong ad blocking (EasyList)"), isOn: $viewModel.useFullAdList)
@@ -248,7 +272,8 @@ struct SettingsView: View {
     }
 
     private var permissionsCard: some View {
-        card(icon: "lock.shield.fill", tint: .teal, title: loc("サイトの権限", "Site permissions")) {
+        card(icon: "lock.shield.fill", tint: .teal, title: loc("サイトの権限", "Site permissions"),
+             reset: .permissions) {
             labeled(loc("カメラ・マイク", "Camera & microphone")) {
                 chips(BrowserViewModel.CapturePolicy.allCases.map { ($0, $0.label) },
                       selection: $viewModel.capturePolicy)
@@ -289,7 +314,8 @@ struct SettingsView: View {
     }
 
     private var highlightsCard: some View {
-        card(icon: "video.badge.checkmark", tint: .pink, title: loc("ハイライト", "Highlights")) {
+        card(icon: "video.badge.checkmark", tint: .pink, title: loc("ハイライト", "Highlights"),
+             reset: .highlights) {
             toggleRow(loc("インスタントリプレイを有効にする", "Enable instant replay"), isOn: $viewModel.highlightsEnabled)
             Text(loc("直近15秒のプレイ画面を裏で保持しておき、ボタン一つで写真アプリに保存できます。録画中の表示は出ません。",
                       "Keeps the last 15 seconds of play buffered invisibly — tap once to save it to Photos. No recording indicator is shown."))
@@ -299,11 +325,41 @@ struct SettingsView: View {
     }
 
     private var backgroundCard: some View {
-        card(icon: "moon.zzz.fill", tint: .indigo, title: loc("バックグラウンド", "Background")) {
+        card(icon: "moon.zzz.fill", tint: .indigo, title: loc("バックグラウンド", "Background"),
+             reset: .background) {
             toggleRow(loc("バックグラウンドで実行を継続", "Keep running in background"), isOn: $viewModel.keepAliveInBackground)
             Text(loc("無音のオーディオを再生し続けることで、アプリを閉じてもページが動き続けます。バッテリー消費が増えます。", "Plays silent audio so pages keep running when the app is closed. Uses more battery."))
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.45))
+        }
+    }
+
+    /// Everything at once. Each card above resets only its own section; this
+    /// is the "put it all back" for when something has been fiddled with and
+    /// it isn't obvious what.
+    private var resetAllCard: some View {
+        card(icon: "arrow.counterclockwise", tint: .gray, title: allSettingsTitle) {
+            Text(loc("すべての設定を初期値に戻します。ブックマーク・履歴・パスワード・タブ・コントロールプロファイルは消えません。",
+                     "Puts every setting back to its default. Bookmarks, history, passwords, tabs and control profiles are kept."))
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.45))
+            Button {
+                confirmResetAll = true
+            } label: {
+                Label(recentlyReset == allSettingsTitle
+                      ? loc("リセットしました", "Settings reset")
+                      : loc("すべての設定をリセット", "Reset all settings"),
+                      systemImage: recentlyReset == allSettingsTitle
+                      ? "checkmark.circle.fill" : "arrow.counterclockwise")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 42)
+                    .background(recentlyReset == allSettingsTitle
+                                ? Color.green.opacity(0.7) : Color.white.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 11))
+            }
+            .animation(.easeInOut(duration: 0.15), value: recentlyReset)
         }
     }
 
@@ -351,6 +407,7 @@ struct SettingsView: View {
     // MARK: - Building blocks
 
     private func card<Content: View>(icon: String, tint: Color, title: String,
+                                     reset: BrowserViewModel.SettingsSection? = nil,
                                      @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
@@ -362,6 +419,10 @@ struct SettingsView: View {
                 Text(title)
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
+                if let reset {
+                    Spacer(minLength: 0)
+                    resetButton(for: reset, title: title)
+                }
             }
             content()
         }
@@ -376,6 +437,33 @@ struct SettingsView: View {
 
     private var divider: some View {
         Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+    }
+
+    /// Per-section reset. It confirms with a checkmark for a moment, because
+    /// a section that was already at its defaults changes nothing visible and
+    /// would otherwise look like a dead button.
+    private func resetButton(for section: BrowserViewModel.SettingsSection,
+                             title: String) -> some View {
+        Button {
+            viewModel.resetSettings(section)
+            markReset(title)
+        } label: {
+            Image(systemName: recentlyReset == title ? "checkmark" : "arrow.counterclockwise")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(recentlyReset == title ? Color.green : Color.white.opacity(0.5))
+                .frame(width: 30, height: 30)
+                .background(Color.white.opacity(0.08), in: Circle())
+        }
+        .accessibilityLabel(loc("\(title)を初期値に戻す", "Reset \(title)"))
+        .animation(.easeInOut(duration: 0.15), value: recentlyReset)
+    }
+
+    private func markReset(_ title: String) {
+        recentlyReset = title
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.6))
+            if recentlyReset == title { recentlyReset = nil }
+        }
     }
 
     private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
