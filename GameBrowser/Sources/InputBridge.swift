@@ -21,6 +21,8 @@ enum InputBridge {
             suppressKeyboard: false,   // cursor mode: don't pop the OS keyboard on focus
             compLen: 0,   // length of the in-field IME composition being edited
             compTarget: null,   // element compLen applies to
+            styleTarget: null,   // element the cursor style was last sampled from
+            styleAt: 0,          // when that sample was taken (ms)
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
@@ -59,6 +61,11 @@ enum InputBridge {
             const r = frameEl.getBoundingClientRect();
             const fx = x - (r.left + (frameEl.clientLeft || 0));
             const fy = y - (r.top + (frameEl.clientTop || 0));
+            // While the pointer is inside the frame, the frame reports the
+            // cursor style; force this frame to re-sample immediately on the
+            // first move after the pointer comes back out, rather than
+            // waiting out its throttle interval with a stale native state.
+            state.styleAt = 0;
             try {
                 frameEl.contentWindow.postMessage(
                     { __gbCall: fn, args: [fx, fy].concat(rest || []) }, '*');
@@ -313,15 +320,25 @@ enum InputBridge {
 
                 // Games that draw their own cursor set `cursor: none` — tell
                 // native code so the overlay arrow disappears over them.
-                // Posted on every move (native side dedupes): per-frame
-                // change-detection swallowed transitions when the cursor
-                // crossed an iframe boundary, trapping it visually inside.
-                try {
-                    window.webkit.messageHandlers.gbEvents.postMessage({
-                        type: 'cursorstyle',
-                        style: getComputedStyle(target).cursor || 'auto',
-                    });
-                } catch (e) {}
+                // getComputedStyle forces a style recalc and this is the
+                // hottest path in the app (a move per touch sample, up to
+                // 120/s), so sample it when the hovered element changes and
+                // at most every 100ms otherwise. The value itself is still
+                // posted every time it's sampled — deduping it per frame is
+                // what previously trapped the cursor state inside an iframe,
+                // since each frame only ever sees its own transitions.
+                const now = (window.performance && performance.now)
+                    ? performance.now() : Date.now();
+                if (target !== state.styleTarget || now - state.styleAt > 100) {
+                    state.styleTarget = target;
+                    state.styleAt = now;
+                    try {
+                        window.webkit.messageHandlers.gbEvents.postMessage({
+                            type: 'cursorstyle',
+                            style: getComputedStyle(target).cursor || 'auto',
+                        });
+                    } catch (e) {}
+                }
             },
 
             down: function (x, y, button) {
@@ -467,7 +484,12 @@ enum InputBridge {
                 Object.defineProperty(ev, 'which', { get: function () { return keyCode; } });
                 const notCancelled = target.dispatchEvent(ev);
                 // Emulate text entry into editable fields for printable keys.
-                if (type === 'keydown' && notCancelled && key.length === 1) {
+                // A modifier combo is a shortcut, not typing: Ctrl+A in a
+                // game's chat box has to select all, not insert an "a" —
+                // easy to hit, since the virtual keyboard's CTRL/ALT are
+                // sticky and stay held across the following keypress.
+                if (type === 'keydown' && notCancelled && key.length === 1 &&
+                    !mods.ctrl && !mods.alt && !mods.meta) {
                     const el = document.activeElement;
                     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
                         const start = el.selectionStart, end = el.selectionEnd;

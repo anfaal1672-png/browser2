@@ -116,20 +116,41 @@ class GamepadInput(
     // --- disconnect handling -----------------------------------------------------
 
     private val deviceListener = object : InputManager.InputDeviceListener {
-        override fun onInputDeviceAdded(deviceId: Int) {}
+        override fun onInputDeviceAdded(deviceId: Int) {
+            reportConnection()
+        }
 
         override fun onInputDeviceRemoved(deviceId: Int) {
             // A device that just vanished can still show up in
             // getInputDevice() for the removed id, so re-scan everything
             // rather than special-casing deviceId.
             if (!hasAnyGamepadConnected()) releaseEverything()
+            reportConnection()
         }
 
-        override fun onInputDeviceChanged(deviceId: Int) {}
+        override fun onInputDeviceChanged(deviceId: Int) {
+            reportConnection()
+        }
     }
 
     init {
         inputManager?.registerInputDeviceListener(deviceListener, handler)
+        reportConnection()
+    }
+
+    /** Keeps [BrowserViewModel.gamepadConnected] in sync so the screen stays awake while playing. */
+    private fun reportConnection() {
+        viewModel.gamepadConnected = hasAnyGamepadConnected()
+    }
+
+    /**
+     * Re-scans for attached controllers. The hosting Activity calls this on
+     * create and resume: a pad paired before the first button press -- or
+     * while the app was in the background -- is otherwise invisible here
+     * until an event happens to arrive.
+     */
+    fun refreshConnectedState() {
+        reportConnection()
     }
 
     private fun hasAnyGamepadConnected(): Boolean {

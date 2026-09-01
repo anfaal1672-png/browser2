@@ -1,9 +1,11 @@
 name: Build Android APK
 
+# Every branch, like the IPA workflow: pinned to one branch, Android changes
+# on any other branch were never compiled before merging.
 on:
   push:
     branches:
-      - claude/ios-browser-game-emulator-0j85nx
+      - "**"
     paths:
       - "android/**"
       - ".github/workflows/build-android.yml"
@@ -31,6 +33,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
+
+      # The Robolectric smoke tests drive MainActivity's real cold-start
+      # lifecycle -- exactly the launch crashes this project has shipped
+      # before -- but nothing ran them, so they could only catch a regression
+      # if someone remembered to run them locally.
+      - name: Unit tests
+        working-directory: android
+        run: gradle testDebugUnitTest --no-daemon
 
       - name: Assemble debug APK
         working-directory: android

@@ -576,6 +576,14 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     /** Fullscreen/immersive presentation: hides the toolbar and system bars (wired in MainActivity). */
     var immersive by mutableStateOf(false)
 
+    /**
+     * True while a physical game controller is attached (maintained by
+     * [GamepadInput]). Controller input never touches the screen, so without
+     * this the display dims and locks in the middle of a game -- MainActivity
+     * holds FLAG_KEEP_SCREEN_ON while this or [immersive] is set.
+     */
+    var gamepadConnected by mutableStateOf(false)
+
     private var scrollJob: Job? = null
     private var scrollDirection: Float = 0f
 

@@ -452,7 +452,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         if !types.isEmpty {
             WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) {}
         }
-        if clearHistoryFlag { clearHistory() }
+        if clearHistoryFlag {
+            clearHistory()
+            clearTabSnapshots()
+        }
     }
 
     /// What to do when a site asks for camera/microphone access.
@@ -605,7 +608,24 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     private var gamepad: GamepadController?
     @Published var pressedKeys: Set<InputBridge.Key> = []
-    @Published var immersive: Bool = false
+    @Published var immersive: Bool = false {
+        didSet { updateIdleTimer() }
+    }
+
+    /// True while a physical game controller is attached (set by GamepadController).
+    var gamepadConnected: Bool = false {
+        didSet { if gamepadConnected != oldValue { updateIdleTimer() } }
+    }
+
+    /// Playing with a controller produces no touches at all, so iOS dims and
+    /// then locks the screen in the middle of a game — the same happens
+    /// during a long cutscene or an idle/strategy game. Hold the idle timer
+    /// off while the user is clearly playing: a controller is attached, or
+    /// the app is in fullscreen (immersive) mode. Both are explicit signals,
+    /// so ordinary browsing still sleeps normally.
+    private func updateIdleTimer() {
+        UIApplication.shared.isIdleTimerDisabled = immersive || gamepadConnected
+    }
 
     @Published var cursorSensitivity: Double {
         didSet { UserDefaults.standard.set(cursorSensitivity, forKey: "cursorSensitivity") }
@@ -719,14 +739,19 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let tiles = bookmarks.map { bookmark -> String in
             let host = URL(string: bookmark.url)?.host ?? ""
             let initial = String(bookmark.title.prefix(1)).uppercased()
+            // Bookmark titles come from whatever <title> the site served, so
+            // they are untrusted markup here, not text.
             return """
-            <a class="tile" href="\(bookmark.url)">
-              <div class="icon"><img src="https://www.google.com/s2/favicons?domain=\(host)&sz=64" \
-            onerror="this.remove()" alt=""><span>\(initial)</span></div>
-              <div class="name">\(bookmark.title)</div>
+            <a class="tile" href="\(Self.escapeHTML(bookmark.url))">
+              <div class="icon"><img src="https://www.google.com/s2/favicons?domain=\
+            \(Self.escapeHTML(host))&sz=64" \
+            onerror="this.remove()" alt=""><span>\(Self.escapeHTML(initial))</span></div>
+              <div class="name">\(Self.escapeHTML(bookmark.title))</div>
             </a>
             """
         }.joined()
+        let subtitle = loc("ブックマークから開く、または上のバーで検索",
+                           "Open a bookmark, or search from the bar above")
 
         return """
         <!DOCTYPE html><html><head>
@@ -754,7 +779,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
                   text-overflow:ellipsis; white-space:nowrap; }
         </style></head><body>
         <h1>GameBrowser</h1>
-        <p class="sub">ブックマークから開く、または上のバーで検索</p>
+        <p class="sub">\(subtitle)</p>
         <div class="grid">\(tiles)</div>
         </body></html>
         """
@@ -762,6 +787,87 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     func loadStartPage(in webView: WKWebView? = nil) {
         (webView ?? self.webView).loadHTMLString(startPageHTML(), baseURL: nil)
+    }
+
+    // MARK: - Error page
+
+    static func escapeHTML(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+
+    /// A failed load used to leave the tab on a blank black screen with no
+    /// explanation and nothing to tap — indistinguishable from the app
+    /// hanging. Show what went wrong, on the URL that failed, with a retry.
+    fileprivate func showErrorPage(for error: Error, in webView: WKWebView) {
+        let ns = error as NSError
+        // These are not failures: a load the user or the app replaced (a new
+        // link tapped mid-load), and the policy cancel that HTTPS-first
+        // performs on every plain-http navigation before reissuing it.
+        if ns.domain == NSURLErrorDomain, ns.code == NSURLErrorCancelled { return }
+        if ns.domain == "WebKitErrorDomain", ns.code == 101 || ns.code == 102 || ns.code == 204 {
+            return
+        }
+        // Only ever act on the URL the error itself names. Falling back to
+        // webView.url would risk replacing the page that is still committed
+        // and perfectly readable underneath a failed navigation.
+        let failing = (ns.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+            ?? (ns.userInfo[NSURLErrorFailingURLStringKey] as? String).flatMap { URL(string: $0) }
+        guard let failed = failing,
+              failed.scheme == "http" || failed.scheme == "https" else { return }
+        // loadSimulatedRequest keeps `failed` as the web view's URL, so the
+        // URL bar still shows where the user was going, back/forward stay
+        // consistent, and the retry link is a plain navigation to it.
+        webView.loadSimulatedRequest(
+            URLRequest(url: failed),
+            responseHTML: Self.errorPageHTML(for: ns, url: failed)
+        )
+    }
+
+    /// Dark error page styled like the start page.
+    private static func errorPageHTML(for error: NSError, url: URL) -> String {
+        let offline = error.domain == NSURLErrorDomain && [
+            NSURLErrorNotConnectedToInternet,
+            NSURLErrorNetworkConnectionLost,
+            NSURLErrorDataNotAllowed,
+        ].contains(error.code)
+        let title = offline
+            ? loc("インターネットに接続されていません", "You're offline")
+            : loc("ページを開けませんでした", "This page didn't load")
+        let message = offline
+            ? loc("Wi-Fi またはモバイル通信を確認してから、もう一度お試しください。",
+                  "Check your Wi-Fi or mobile connection, then try again.")
+            : escapeHTML(error.localizedDescription)
+        let href = escapeHTML(url.absoluteString)
+
+        return """
+        <!DOCTYPE html><html><head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+          body { background:#0b0f14; color:#e8edf2; font-family:-apple-system,sans-serif;
+                 min-height:100vh; display:flex; flex-direction:column; align-items:center;
+                 justify-content:center; text-align:center; padding:32px 24px; }
+          .icon { font-size:42px; margin-bottom:16px; }
+          h1 { font-size:20px; font-weight:700; }
+          .msg { color:#9aa7b4; font-size:14px; line-height:1.55; margin-top:10px; max-width:420px; }
+          .host { color:#5c6773; font-size:12px; margin-top:16px; max-width:420px;
+                  word-break:break-all; }
+          .retry { margin-top:26px; display:inline-block; text-decoration:none;
+                   color:#0b0f14; background:#39d3f5; font-size:14px; font-weight:600;
+                   padding:11px 26px; border-radius:11px; }
+          .retry:active { background:#2bb9d8; }
+        </style></head><body>
+        <div class="icon">\(offline ? "📡" : "⚠️")</div>
+        <h1>\(title)</h1>
+        <p class="msg">\(message)</p>
+        <p class="host">\(href)</p>
+        <a class="retry" href="\(href)">\(loc("再試行", "Try again"))</a>
+        </body></html>
+        """
     }
 
     // MARK: - Init
@@ -876,6 +982,19 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Tab thumbnails are pictures of the pages you visited, so clearing
+    /// history has to take them with it — they used to outlive it on disk,
+    /// and stayed visible in the tab switcher afterwards.
+    private func clearTabSnapshots() {
+        for tab in tabs { tab.snapshot = nil }
+        let dir = Self.snapshotsDir
+        Task.detached(priority: .utility) {
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil)) ?? []
+            for file in files { try? FileManager.default.removeItem(at: file) }
+        }
+    }
+
     /// Per-tab persisted state (URL, scroll position, ...).
     private struct TabRecord: Codable {
         var url: String
@@ -893,7 +1012,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
             } else {
                 urlString = url!.absoluteString
             }
-            let offset = tab.webView.scrollView.contentOffset
+            // A restored tab that hasn't been opened yet has an empty web
+            // view, so keep the scroll position it was saved with instead of
+            // overwriting it with that empty view's (0, 0).
+            let offset = tab.pendingScroll ?? tab.webView.scrollView.contentOffset
             return TabRecord(url: urlString, scrollX: offset.x, scrollY: max(offset.y, 0))
         }
         let defaults = UserDefaults.standard
@@ -922,14 +1044,15 @@ final class BrowserViewModel: NSObject, ObservableObject {
             let url = URL(string: record.url)!
             let tab = Tab(webView: makeWebView())
             tab.pendingURL = url
+            // Deferred: selectTab() loads a tab the first time it is shown.
+            // Loading every restored tab up front meant a relaunch with a
+            // dozen tabs fired a dozen page loads at once — slow to launch,
+            // and all of it competing for memory and bandwidth with the one
+            // tab the user is actually looking at.
+            tab.pendingLoad = url
             tab.pendingScroll = CGPoint(x: record.scrollX, y: record.scrollY)
             tab.snapshot = UIImage(contentsOfFile: snapshotFile(i).path)
             tabs.append(tab)
-            if record.url == Self.startPageMarker {
-                loadStartPage(in: tab.webView)
-            } else {
-                tab.webView.load(URLRequest(url: url))
-            }
         }
         let saved = defaults.integer(forKey: "savedActiveTabIndex")
         selectTab(min(max(saved, 0), tabs.count - 1))
@@ -943,15 +1066,33 @@ final class BrowserViewModel: NSObject, ObservableObject {
         @Published var snapshot: UIImage?
         /// Last requested URL; used for persistence while the page is still loading.
         var pendingURL: URL?
+        /// Set while this tab still owes itself a load — a restored tab that
+        /// hasn't been opened yet, or a brand new one. Popup tabs never set
+        /// it: WebKit performs those loads itself.
+        var pendingLoad: URL?
         /// Scroll position to restore once the page finishes loading.
         var pendingScroll: CGPoint?
         init(webView: WKWebView) { self.webView = webView }
 
         @MainActor var title: String {
             let t = webView.title ?? ""
-            return t.isEmpty ? (webView.url?.host ?? loc("新しいタブ", "New Tab")) : t
+            if !t.isEmpty { return t }
+            if let host = webView.url?.host { return host }
+            // A restored tab that hasn't been opened yet has no web view URL
+            // to fall back on — only the one it is going to load.
+            if let pending = pendingURL,
+               pending.absoluteString != BrowserViewModel.startPageMarker,
+               let host = pending.host {
+                return host
+            }
+            return loc("新しいタブ", "New Tab")
         }
-        @MainActor var urlString: String { webView.url?.absoluteString ?? "" }
+        @MainActor var urlString: String {
+            if let url = webView.url { return url.absoluteString }
+            guard let pending = pendingURL,
+                  pending.absoluteString != BrowserViewModel.startPageMarker else { return "" }
+            return pending.absoluteString
+        }
     }
 
     @Published var tabs: [Tab] = []
@@ -992,14 +1133,21 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let tab = Tab(webView: makeWebView())
         let useStartPage = url == nil && newTabPage == .startPage
         tab.pendingURL = useStartPage ? URL(string: Self.startPageMarker) : (url ?? Self.homeURL)
+        tab.pendingLoad = tab.pendingURL
         tabs.append(tab)
-        selectTab(tabs.count - 1)
-        if useStartPage {
+        selectTab(tabs.count - 1)   // performs the load
+        saveTabs()
+    }
+
+    /// Load a tab that hasn't been loaded yet, the first time it is shown.
+    private func loadPendingIfNeeded(_ tab: Tab) {
+        guard let url = tab.pendingLoad else { return }
+        tab.pendingLoad = nil
+        if url.absoluteString == Self.startPageMarker {
             loadStartPage(in: tab.webView)
         } else {
-            tab.webView.load(URLRequest(url: url ?? Self.homeURL))
+            tab.webView.load(URLRequest(url: url))
         }
-        saveTabs()
     }
 
     func selectTab(_ index: Int) {
@@ -1008,6 +1156,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         releaseAllKeys()
         if dragLocked { mouseUp() }   // don't leave a mouse button held in the old tab
         activeTabIndex = index
+        loadPendingIfNeeded(tabs[index])
         bindObservers(to: tabs[index].webView)
         pointerLocked = false
         pageHidesCursor = false
@@ -1607,6 +1756,24 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
 
             guard let url = webView.url else { return }
             self.recordHistory(url: url, title: webView.title ?? "")
+        }
+    }
+
+    /// The request never got off the ground (DNS, offline, TLS, timeout).
+    nonisolated func webView(_ webView: WKWebView,
+                             didFailProvisionalNavigation navigation: WKNavigation!,
+                             withError error: Error) {
+        Task { @MainActor [weak self] in
+            self?.showErrorPage(for: error, in: webView)
+        }
+    }
+
+    /// The load started and then died part-way through.
+    nonisolated func webView(_ webView: WKWebView,
+                             didFail navigation: WKNavigation!,
+                             withError error: Error) {
+        Task { @MainActor [weak self] in
+            self?.showErrorPage(for: error, in: webView)
         }
     }
 }

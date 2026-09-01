@@ -21,6 +21,8 @@
         suppressKeyboard: false,
         compLen: 0,
         compTarget: null,   // element compLen applies to
+        styleTarget: null,  // element the cursor style was last sampled from
+        styleAt: 0,         // when that sample was taken (ms)
     };
 
     function toPage(x, y) {
@@ -241,7 +243,16 @@
             firePointer('pointermove', target, x, y, -1, extra);
             fireMouse('mousemove', target, x, y, 0, extra);
             updateDnd(x, y);
-            post({ type: 'cursorstyle', style: getComputedStyle(target).cursor || 'auto' });
+            // getComputedStyle forces a style recalc and this runs on every
+            // pointer move (one per touch sample), so sample it when the
+            // hovered element changes and at most every 100ms otherwise.
+            const now = (window.performance && performance.now)
+                ? performance.now() : Date.now();
+            if (target !== state.styleTarget || now - state.styleAt > 100) {
+                state.styleTarget = target;
+                state.styleAt = now;
+                post({ type: 'cursorstyle', style: getComputedStyle(target).cursor || 'auto' });
+            }
         },
 
         down: function (x, y, button) {
@@ -330,7 +341,12 @@
             Object.defineProperty(ev, 'keyCode', { get: function () { return keyCode; } });
             Object.defineProperty(ev, 'which', { get: function () { return keyCode; } });
             const notCancelled = target.dispatchEvent(ev);
-            if (type === 'keydown' && notCancelled && key.length === 1) {
+            // A modifier combo is a shortcut, not typing: Ctrl+A in a game's
+            // chat box has to select all, not insert an "a" — easy to hit,
+            // since the virtual keyboard's CTRL/ALT are sticky and stay held
+            // across the following keypress.
+            if (type === 'keydown' && notCancelled && key.length === 1 &&
+                !mods.ctrl && !mods.alt && !mods.meta) {
                 const el = document.activeElement;
                 if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
                     const start = el.selectionStart, end = el.selectionEnd;

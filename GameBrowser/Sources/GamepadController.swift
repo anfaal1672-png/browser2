@@ -26,14 +26,27 @@ final class GamepadController {
         NotificationCenter.default.addObserver(
             forName: .GCControllerDidConnect, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.startPolling() }
+            Task { @MainActor in
+                self?.startPolling()
+                self?.reportConnection()
+            }
         }
         NotificationCenter.default.addObserver(
             forName: .GCControllerDidDisconnect, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.stopPollingIfIdle() }
+            Task { @MainActor in
+                self?.stopPollingIfIdle()
+                self?.reportConnection()
+            }
         }
+        reportConnection()
         if !GCController.controllers().isEmpty { startPolling() }
+    }
+
+    /// Controller input never touches the screen, so the view model needs to
+    /// know a pad is attached to keep the display from sleeping mid-game.
+    private func reportConnection() {
+        viewModel?.gamepadConnected = !GCController.controllers().isEmpty
     }
 
     private func startPolling() {

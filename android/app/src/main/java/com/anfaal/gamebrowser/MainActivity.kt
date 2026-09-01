@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -95,6 +96,10 @@ class MainActivity : FragmentActivity() {
         // if none are enrolled, AppLock.authenticate's own "don't lock the user out" fallback).
         if (viewModel.appLockEnabled) viewModel.isLocked = true
 
+        // Also forces the lazy GamepadInput to exist now, so its device
+        // listener is registered before the first controller event arrives.
+        gamepadInput.refreshConnectedState()
+
         HighlightRecorder.onRequestConsent = {
             screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
         }
@@ -122,6 +127,18 @@ class MainActivity : FragmentActivity() {
                 showFindBar = false
                 findQuery = ""
                 viewModel.clearFindSelection()
+            }
+
+            // Playing with a controller produces no touches at all, and neither
+            // does a long cutscene in fullscreen, so the display would dim and
+            // lock mid-game. Hold it awake only for those two explicit "playing"
+            // signals; ordinary browsing still sleeps normally.
+            LaunchedEffect(viewModel.immersive, viewModel.gamepadConnected) {
+                if (viewModel.immersive || viewModel.gamepadConnected) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
             }
 
             // Hides/shows the system status/nav bars to match viewModel.immersive,
@@ -232,6 +249,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        gamepadInput.refreshConnectedState()
         if (viewModel.isLocked) attemptUnlock()
     }
 

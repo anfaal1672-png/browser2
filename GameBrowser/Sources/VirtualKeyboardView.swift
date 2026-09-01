@@ -7,8 +7,9 @@ import SwiftUI
 struct VirtualKeyboardView: View {
     @ObservedObject var viewModel: BrowserViewModel
 
-    /// Natural size of the gamepad layout; it is scaled down to fit narrow screens.
-    private static let gamepadSize = CGSize(width: 540, height: 85)
+    /// Natural size of the gamepad layout; it is scaled down to fit narrow
+    /// screens. Height = digit row (40) + spacing (5) + clusters (85).
+    private static let gamepadSize = CGSize(width: 540, height: 130)
 
     var body: some View {
         VStack(spacing: 6) {
@@ -49,6 +50,26 @@ struct VirtualKeyboardView: View {
     }
 
     private var gamepadLayout: some View {
+        VStack(spacing: 5) {
+            digitRow
+            clusters
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Number row. Browser games overwhelmingly bind 1-9 to weapon/item/skill
+    /// slots, which the gamepad layout had no way to send at all — reaching
+    /// them meant switching to the full QWERTY keyboard mid-fight.
+    private var digitRow: some View {
+        HStack(spacing: 5) {
+            ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+                .map(InputBridge.digit), id: \.self) { key in
+                KeyButton(key: key, viewModel: viewModel, width: 44)
+            }
+        }
+    }
+
+    private var clusters: some View {
         HStack(alignment: .center, spacing: 14) {
             // WASD cluster
             VStack(spacing: 5) {
@@ -87,7 +108,6 @@ struct VirtualKeyboardView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Full QWERTY
