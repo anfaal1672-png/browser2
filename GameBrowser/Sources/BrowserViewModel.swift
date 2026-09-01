@@ -62,6 +62,107 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet { applyKeyboardSuppression() }
     }
 
+    // MARK: - Focus the game / FPS meter
+
+    /// True while the page's game element is blown up to fill the screen.
+    @Published var gameFocused = false
+    /// Frames per second reported by the page's own animation loop.
+    @Published var fps: Int = 0
+    @Published var showFPS: Bool {
+        didSet {
+            UserDefaults.standard.set(showFPS, forKey: "showFPS")
+            if !showFPS { fps = 0 }
+            applyFPSMeter()
+        }
+    }
+
+    func applyFPSMeter() {
+        guard !tabs.isEmpty else { return }
+        webView.evaluateJavaScript(
+            "window.__gb && __gb.setFpsMeter(\(showFPS))", completionHandler: nil)
+    }
+
+    /// Fill the screen with the game itself. Most browser-game pages wrap a
+    /// small canvas or iframe in ads and site chrome; this promotes that one
+    /// element and hides everything around it. Tapping again restores it.
+    func toggleGameFocus() {
+        guard !tabs.isEmpty else { return }
+        let focusing = !gameFocused
+        webView.evaluateJavaScript(
+            focusing ? "window.__gb && __gb.focusGame()" : "window.__gb && __gb.unfocusGame()"
+        ) { [weak self] result, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let succeeded = (result as? Bool) ?? false
+                if focusing {
+                    // Nothing game-shaped on the page — say so by staying put
+                    // rather than silently pretending it worked.
+                    self.gameFocused = succeeded
+                    if succeeded {
+                        self.immersive = true
+                        self.hapticMedium()
+                    }
+                } else {
+                    self.gameFocused = false
+                    self.hapticLight()
+                }
+            }
+        }
+    }
+
+    /// Allow pinch-zoom even on pages that ask not to be scaled — nearly
+    /// every game does, and a desktop layout on a phone often needs it.
+    @Published var forceZoom: Bool {
+        didSet {
+            UserDefaults.standard.set(forceZoom, forKey: "forceZoom")
+            applyForceZoom()
+        }
+    }
+
+    func applyForceZoom() {
+        guard !tabs.isEmpty else { return }
+        webView.evaluateJavaScript(
+            "window.__gb && __gb.setForceZoom(\(forceZoom))", completionHandler: nil)
+    }
+
+    /// Pinch handled by the trackpad overlay: in cursor mode the overlay takes
+    /// every touch, so the web view never sees a pinch of its own and the
+    /// page simply could not be zoomed. `point` is the midpoint between the
+    /// fingers, which stays put while the page scales around it.
+    func pinchZoom(by factor: CGFloat, at point: CGPoint) {
+        guard !tabs.isEmpty else { return }
+        let scrollView = webView.scrollView
+        guard scrollView.maximumZoomScale > scrollView.minimumZoomScale else { return }
+        let current = scrollView.zoomScale
+        let target = min(max(current * factor, scrollView.minimumZoomScale),
+                         scrollView.maximumZoomScale)
+        guard abs(target - current) > 0.0005 else { return }
+
+        let offset = scrollView.contentOffset
+        let contentPoint = CGPoint(x: (offset.x + point.x) / current,
+                                   y: (offset.y + point.y) / current)
+        scrollView.setZoomScale(target, animated: false)
+
+        var newOffset = CGPoint(x: contentPoint.x * target - point.x,
+                                y: contentPoint.y * target - point.y)
+        let maxX = max(scrollView.contentSize.width - scrollView.bounds.width, 0)
+        let maxY = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
+        newOffset.x = min(max(newOffset.x, 0), maxX)
+        newOffset.y = min(max(newOffset.y, 0), maxY)
+        scrollView.setContentOffset(newOffset, animated: false)
+    }
+
+    var isZoomed: Bool {
+        guard !tabs.isEmpty else { return false }
+        return webView.scrollView.zoomScale > webView.scrollView.minimumZoomScale + 0.01
+    }
+
+    func resetZoom() {
+        guard !tabs.isEmpty else { return }
+        webView.scrollView.setZoomScale(webView.scrollView.minimumZoomScale, animated: true)
+        hapticLight()
+    }
+
     /// In cursor mode, page focus must not open the iOS keyboard.
     func applyKeyboardSuppression() {
         guard !tabs.isEmpty else { return }
@@ -1182,6 +1283,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         highlightsEnabled = defaults.bool(forKey: "highlightsEnabled")
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool
             ?? defaults.bool(forKey: "pcMode")
+        forceZoom = defaults.object(forKey: "forceZoom") as? Bool ?? true
+        showFPS = defaults.bool(forKey: "showFPS")
         profiles = ControlProfileStore.loadProfiles()
         activeProfileID = ControlProfileStore.loadActive()
         padVisible = defaults.bool(forKey: "padVisible")
@@ -1886,6 +1989,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
             if cursorStyle != style { cursorStyle = style }
             let hidden = style == "none"
             if pageHidesCursor != hidden { pageHidesCursor = hidden }
+        } else if type == "fps" {
+            if let value = dict["value"] as? Int, showFPS { fps = value }
         } else if type == "notification" {
             postWebNotification(
                 title: dict["title"] as? String ?? "",
@@ -2020,6 +2125,10 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.applyKeyboardSuppression()
+            self.applyForceZoom()
+            self.applyFPSMeter()
+            // A fresh document has none of the focus styling we applied.
+            self.gameFocused = false
 
             // Restore the saved scroll position after a relaunch.
             if let tab = self.tabs.first(where: { $0.webView === webView }),

@@ -109,10 +109,31 @@ struct SettingsView: View {
                       display: "\(Int(viewModel.scrollSpeed))")
 
             divider
-            toggleRow(loc("触覚フィードバック", "Haptic feedback"), isOn: $viewModel.hapticsEnabled)
-            toggleRow(loc("ジョイスティック: 矢印キーを送信", "Joystick sends arrow keys"), isOn: $viewModel.joystickUsesArrows)
-            buttonRow(loc("ジョイスティック位置をリセット", "Reset joystick position")) {
-                viewModel.resetJoystickPosition()
+            // Grouped: a card's content is a ViewBuilder, which tops out at
+            // ten direct children.
+            VStack(alignment: .leading, spacing: 12) {
+                toggleRow(loc("触覚フィードバック", "Haptic feedback"), isOn: $viewModel.hapticsEnabled)
+                toggleRow(loc("ピンチでズームを常に許可", "Always allow pinch zoom"),
+                          isOn: $viewModel.forceZoom)
+                Text(loc("ズーム禁止のゲームページでも2本指でズームできます。",
+                         "Lets you pinch-zoom pages that disable zooming."))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                toggleRow(loc("FPS(フレームレート)を表示", "Show FPS meter"), isOn: $viewModel.showFPS)
+                toggleRow(loc("ジョイスティック: 矢印キーを送信", "Joystick sends arrow keys"),
+                          isOn: $viewModel.joystickUsesArrows)
+                buttonRow(loc("ジョイスティック位置をリセット", "Reset joystick position")) {
+                    viewModel.resetJoystickPosition()
+                }
+                divider
+                buttonRow(loc("コントロールパッドを設定", "Set up control pads")) {
+                    // Presenting a sheet from a sheet needs this one to close first.
+                    dismiss()
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(350))
+                        viewModel.showProfiles = true
+                    }
+                }
             }
         }
     }

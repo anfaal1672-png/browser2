@@ -23,6 +23,9 @@ enum InputBridge {
             compTarget: null,   // element compLen applies to
             styleTarget: null,   // element the cursor style was last sampled from
             styleAt: 0,          // when that sample was taken (ms)
+            focused: null,       // element blown up to fill the screen, if any
+            fpsWanted: false,    // FPS meter requested
+            fpsRunning: false,   // its rAF loop is live
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
@@ -632,6 +635,112 @@ enum InputBridge {
 
             isPointerLocked: function () {
                 return !!document.pointerLockElement;
+            },
+
+            // Browser-game pages are mostly ads and site chrome around a small
+            // canvas or iframe. Blow that element up to fill the screen and
+            // hide the rest — the "fullscreen" button games rarely provide.
+            focusGame: function () {
+                try {
+                    if (state.focused) { return bridge.unfocusGame(); }
+                    const candidates = [].slice.call(
+                        document.querySelectorAll('canvas, iframe, embed, object, video'));
+                    let best = null;
+                    let bestArea = 0;
+                    for (const el of candidates) {
+                        const r = el.getBoundingClientRect();
+                        const area = r.width * r.height;
+                        if (area > bestArea && r.width > 120 && r.height > 90) {
+                            best = el;
+                            bestArea = area;
+                        }
+                    }
+                    if (!best) { return false; }
+                    state.focused = {
+                        el: best,
+                        style: best.getAttribute('style'),
+                        rootOverflow: document.documentElement.style.overflow,
+                    };
+                    best.style.cssText += ';position:fixed !important;left:0 !important;' +
+                        'top:0 !important;width:100vw !important;height:100vh !important;' +
+                        'max-width:none !important;max-height:none !important;' +
+                        'margin:0 !important;z-index:2147483647 !important;' +
+                        'background:#000 !important;';
+                    document.documentElement.style.overflow = 'hidden';
+                    window.scrollTo(0, 0);
+                    return true;
+                } catch (e) { return false; }
+            },
+
+            unfocusGame: function () {
+                try {
+                    const focused = state.focused;
+                    if (!focused) { return false; }
+                    if (typeof focused.style === 'string') {
+                        focused.el.setAttribute('style', focused.style);
+                    } else {
+                        focused.el.removeAttribute('style');
+                    }
+                    document.documentElement.style.overflow = focused.rootOverflow || '';
+                    state.focused = null;
+                    return true;
+                } catch (e) { return false; }
+            },
+
+            // Frame rate of the page's own animation loop, so it's possible to
+            // tell "this game runs badly" from "my connection is bad".
+            setFpsMeter: function (on) {
+                state.fpsWanted = !!on;
+                if (!on || state.fpsRunning || window.top !== window) { return; }
+                state.fpsRunning = true;
+                let frames = 0;
+                let last = performance.now();
+                const tick = function (now) {
+                    frames++;
+                    if (now - last >= 1000) {
+                        const fps = Math.round((frames * 1000) / (now - last));
+                        frames = 0;
+                        last = now;
+                        try {
+                            window.webkit.messageHandlers.gbEvents.postMessage({
+                                type: 'fps', value: fps,
+                            });
+                        } catch (e) {}
+                    }
+                    if (state.fpsWanted) { requestAnimationFrame(tick); }
+                    else { state.fpsRunning = false; }
+                };
+                requestAnimationFrame(tick);
+            },
+
+            // Most games ship `user-scalable=no`, which makes WebKit clamp the
+            // scroll view to a single zoom level — so pinch-to-zoom has nothing
+            // to zoom. Rewrite the viewport so the page can be scaled anyway,
+            // keeping the original around to restore when the setting is off.
+            setForceZoom: function (on) {
+                try {
+                    if (window.top !== window) { return; }   // main frame only
+                    let meta = document.querySelector('meta[name="viewport"]');
+                    if (!on) {
+                        if (meta && typeof state.originalViewport === 'string') {
+                            meta.setAttribute('content', state.originalViewport);
+                        }
+                        return;
+                    }
+                    if (!meta) {
+                        meta = document.createElement('meta');
+                        meta.setAttribute('name', 'viewport');
+                        (document.head || document.documentElement).appendChild(meta);
+                        state.originalViewport = '';
+                    } else if (typeof state.originalViewport !== 'string') {
+                        state.originalViewport = meta.getAttribute('content') || '';
+                    }
+                    const base = (state.originalViewport || 'width=device-width, initial-scale=1')
+                        .replace(/,?\s*user-scalable\s*=\s*[^,]*/gi, '')
+                        .replace(/,?\s*maximum-scale\s*=\s*[^,]*/gi, '')
+                        .replace(/^\s*,\s*/, '');
+                    meta.setAttribute('content', base + ', user-scalable=yes, maximum-scale=5');
+                } catch (e) {}
             },
         };
 

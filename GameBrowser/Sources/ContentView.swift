@@ -66,7 +66,10 @@ struct ContentView: View {
                     if viewModel.immersive { immersiveExitButton }
                 }
                 .overlay(alignment: .topLeading) {
-                    if viewModel.highlightsEnabled { highlightButton }
+                    HStack(spacing: 0) {
+                        if viewModel.highlightsEnabled { highlightButton }
+                        if viewModel.showFPS { fpsBadge }
+                    }
                 }
                 .overlay(alignment: .top) {
                     if viewModel.padEditing {
@@ -186,6 +189,13 @@ struct ContentView: View {
     /// Small floating controls shown in immersive mode.
     private var immersiveExitButton: some View {
         HStack(spacing: 8) {
+            floatingButton(icon: viewModel.gameFocused
+                           ? "rectangle.compress.vertical" : "gamecontroller.fill") {
+                viewModel.toggleGameFocus()
+            }
+            floatingButton(icon: "circle.grid.cross.fill") {
+                viewModel.padVisible.toggle()
+            }
             floatingButton(icon: "keyboard") {
                 viewModel.keyboardVisible.toggle()
             }
@@ -219,6 +229,29 @@ struct ContentView: View {
         .disabled(viewModel.highlightSaveState == .saving)
         .padding(10)
         .animation(.easeInOut(duration: 0.2), value: viewModel.highlightSaveState)
+    }
+
+    /// The page's own animation rate — a slow game and a slow connection look
+    /// the same on screen otherwise.
+    private var fpsBadge: some View {
+        Text(viewModel.fps > 0 ? "\(viewModel.fps) FPS" : "— FPS")
+            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .foregroundStyle(fpsColor)
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(.black.opacity(0.45), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 0.5))
+            .padding(.vertical, 10)
+            .padding(.leading, 10)
+    }
+
+    private var fpsColor: Color {
+        switch viewModel.fps {
+        case 0: return .white.opacity(0.6)
+        case ..<25: return .red
+        case ..<50: return .yellow
+        default: return .green
+        }
     }
 
     private var highlightIcon: String {
@@ -314,52 +347,68 @@ struct ContentView: View {
             }
 
             Menu {
-                if let url = viewModel.currentURL {
-                    ShareLink(item: url) {
-                        Label(loc("共有", "Share"), systemImage: "square.and.arrow.up")
+                // Grouped because a ViewBuilder takes at most ten children.
+                Group {
+                    if let url = viewModel.currentURL {
+                        ShareLink(item: url) {
+                            Label(loc("共有", "Share"), systemImage: "square.and.arrow.up")
+                        }
+                        Button {
+                            UIPasteboard.general.string = url.absoluteString
+                        } label: {
+                            Label(loc("リンクをコピー", "Copy link"), systemImage: "doc.on.doc")
+                        }
                     }
                     Button {
-                        UIPasteboard.general.string = url.absoluteString
+                        showFindBar = true
+                        findFieldFocused = true
                     } label: {
-                        Label(loc("リンクをコピー", "Copy link"), systemImage: "doc.on.doc")
+                        Label(loc("ページ内検索", "Find in page"), systemImage: "magnifyingglass")
                     }
-                }
-                Button {
-                    showFindBar = true
-                    findFieldFocused = true
-                } label: {
-                    Label(loc("ページ内検索", "Find in page"), systemImage: "magnifyingglass")
-                }
-                Button { showHistory = true } label: {
-                    Label(loc("履歴", "History"), systemImage: "clock")
-                }
-                Button { viewModel.translatePage() } label: {
-                    Label(loc("ページを翻訳", "Translate page"), systemImage: "character.bubble")
-                }
-                .disabled(viewModel.currentURL == nil)
-                Button { viewModel.showProfiles = true } label: {
-                    Label(loc("コントロール設定", "Controls"), systemImage: "gamecontroller")
-                }
-                if viewModel.highlightsEnabled {
-                    Button { viewModel.saveHighlight() } label: {
-                        Label(loc("ハイライトを保存(直近15秒)", "Save highlight (last 15s)"), systemImage: "video.badge.checkmark")
+                    Button { showHistory = true } label: {
+                        Label(loc("履歴", "History"), systemImage: "clock")
+                    }
+                    Button { viewModel.translatePage() } label: {
+                        Label(loc("ページを翻訳", "Translate page"), systemImage: "character.bubble")
+                    }
+                    .disabled(viewModel.currentURL == nil)
+                    Button { viewModel.showProfiles = true } label: {
+                        Label(loc("コントロール設定", "Controls"), systemImage: "gamecontroller")
+                    }
+                    if viewModel.highlightsEnabled {
+                        Button { viewModel.saveHighlight() } label: {
+                            Label(loc("ハイライトを保存(直近15秒)", "Save highlight (last 15s)"), systemImage: "video.badge.checkmark")
+                        }
                     }
                 }
                 Divider()
-                Button {
-                    viewModel.desktopMode.toggle()
-                } label: {
-                    Label(viewModel.desktopMode ? loc("モバイル版サイトを表示", "Show mobile site") : loc("PC版サイトを表示", "Show desktop site"),
-                          systemImage: viewModel.desktopMode ? "iphone" : "desktopcomputer")
-                }
-                Button {
-                    viewModel.showScrollButtons.toggle()
-                } label: {
-                    Label(viewModel.showScrollButtons ? loc("スクロールボタンを隠す", "Hide scroll buttons") : loc("スクロールボタンを表示", "Show scroll buttons"),
-                          systemImage: "chevron.up.chevron.down")
-                }
-                Button { viewModel.goHome() } label: {
-                    Label(loc("ホーム", "Home"), systemImage: "house")
+                Group {
+                    Button { viewModel.toggleGameFocus() } label: {
+                        Label(viewModel.gameFocused
+                              ? loc("ゲーム全画面を解除", "Exit game fullscreen")
+                              : loc("ゲームだけ全画面", "Fullscreen the game"),
+                              systemImage: viewModel.gameFocused
+                              ? "arrow.down.right.and.arrow.up.left" : "gamecontroller.fill")
+                    }
+                    Button {
+                        viewModel.desktopMode.toggle()
+                    } label: {
+                        Label(viewModel.desktopMode ? loc("モバイル版サイトを表示", "Show mobile site") : loc("PC版サイトを表示", "Show desktop site"),
+                              systemImage: viewModel.desktopMode ? "iphone" : "desktopcomputer")
+                    }
+                    Button {
+                        viewModel.showScrollButtons.toggle()
+                    } label: {
+                        Label(viewModel.showScrollButtons ? loc("スクロールボタンを隠す", "Hide scroll buttons") : loc("スクロールボタンを表示", "Show scroll buttons"),
+                              systemImage: "chevron.up.chevron.down")
+                    }
+                    Button { viewModel.resetZoom() } label: {
+                        Label(loc("ズームをリセット", "Reset zoom"),
+                              systemImage: "arrow.up.left.and.down.right.magnifyingglass")
+                    }
+                    Button { viewModel.goHome() } label: {
+                        Label(loc("ホーム", "Home"), systemImage: "house")
+                    }
                 }
                 Divider()
                 Button { showSettings = true } label: {
