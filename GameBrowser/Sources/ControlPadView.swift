@@ -14,6 +14,9 @@ struct ControlPadOverlay: View {
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            // Dimmed to taste while playing (they sit on top of the game),
+            // always fully visible while arranging them.
+            .opacity(viewModel.padEditing ? 1 : (viewModel.activeProfile?.padOpacity ?? 0.9))
         }
     }
 }

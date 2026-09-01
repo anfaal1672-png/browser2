@@ -53,9 +53,62 @@ struct ControlProfile: Codable, Identifiable, Equatable {
     var showJoystick: Bool = false
     /// Stick sends arrows instead of WASD.
     var joystickArrows: Bool = false
+    /// Cursor speed for this game only; nil uses the global setting. An FPS
+    /// wants a flick to cross the screen, a strategy game wants precision.
+    var cursorSensitivity: Double?
+    /// Pads are drawn over the game, so they can be dimmed out of the way.
+    var padOpacity: Double = 0.9
+    /// Blow the game up to fill the screen as soon as this profile applies —
+    /// with a per-site assignment, opening the game is the whole setup.
+    var autoFocusGame: Bool = false
 
     func gamepadKey(_ slot: GamepadSlot) -> String {
         gamepadMap[slot.rawValue] ?? slot.defaultKey
+    }
+}
+
+// Decoding is written out rather than synthesised so that profiles saved by
+// an older build — which have none of the keys added since — still load
+// instead of throwing and taking every saved layout down with them.
+extension ControlProfile {
+    enum CodingKeys: String, CodingKey {
+        case id, name, buttons, gamepadMap, showJoystick, joystickArrows
+        case cursorSensitivity, padOpacity, autoFocusGame
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+            ?? loc("プロファイル", "Profile")
+        buttons = try container.decodeIfPresent([PadButton].self, forKey: .buttons) ?? []
+        gamepadMap = try container.decodeIfPresent([String: String].self,
+                                                   forKey: .gamepadMap) ?? [:]
+        showJoystick = try container.decodeIfPresent(Bool.self, forKey: .showJoystick) ?? false
+        joystickArrows = try container.decodeIfPresent(Bool.self, forKey: .joystickArrows) ?? false
+        cursorSensitivity = try container.decodeIfPresent(Double.self, forKey: .cursorSensitivity)
+        padOpacity = try container.decodeIfPresent(Double.self, forKey: .padOpacity) ?? 0.9
+        autoFocusGame = try container.decodeIfPresent(Bool.self, forKey: .autoFocusGame) ?? false
+    }
+}
+
+extension PadButton {
+    enum CodingKeys: String, CodingKey {
+        case id, keys, mouseButton, label, x, y, size, sticky, turbo, tint
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        keys = try container.decodeIfPresent([String].self, forKey: .keys) ?? []
+        mouseButton = try container.decodeIfPresent(Int.self, forKey: .mouseButton)
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? ""
+        x = try container.decodeIfPresent(Double.self, forKey: .x) ?? 0.5
+        y = try container.decodeIfPresent(Double.self, forKey: .y) ?? 0.5
+        size = try container.decodeIfPresent(Double.self, forKey: .size) ?? 62
+        sticky = try container.decodeIfPresent(Bool.self, forKey: .sticky) ?? false
+        turbo = try container.decodeIfPresent(Bool.self, forKey: .turbo) ?? false
+        tint = try container.decodeIfPresent(Int.self, forKey: .tint) ?? 0
     }
 }
 

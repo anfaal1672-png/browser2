@@ -455,6 +455,57 @@ final class BrowserViewModel: NSObject, ObservableObject {
         hapticLight()
     }
 
+    // MARK: Per-profile tuning
+
+    /// The profile's own cursor speed, or the global one when it has none.
+    var effectiveSensitivity: Double { activeProfile?.cursorSensitivity ?? cursorSensitivity }
+
+    func setProfileSensitivity(_ value: Double?) {
+        updateProfile { $0.cursorSensitivity = value }
+    }
+
+    func setPadOpacity(_ value: Double) {
+        updateProfile { $0.padOpacity = value }
+    }
+
+    func setAutoFocusGame(_ on: Bool) {
+        updateProfile { $0.autoFocusGame = on }
+        hapticLight()
+    }
+
+    /// Copy the active profile as JSON — a layout is worth sharing, and worth
+    /// keeping somewhere that survives a reinstall.
+    @discardableResult
+    func copyActiveProfile() -> Bool {
+        guard let profile = activeProfile,
+              let data = try? JSONEncoder().encode(profile),
+              let json = String(data: data, encoding: .utf8) else { return false }
+        UIPasteboard.general.string = json
+        hapticMedium()
+        return true
+    }
+
+    /// Load a profile from JSON on the clipboard, as a new copy.
+    @discardableResult
+    func pasteProfile() -> Bool {
+        guard let text = UIPasteboard.general.string,
+              let data = text.data(using: .utf8),
+              var profile = try? JSONDecoder().decode(ControlProfile.self, from: data)
+        else { return false }
+        // Fresh ids so pasting the same layout twice gives two profiles
+        // rather than two things claiming to be the same one.
+        profile.id = UUID()
+        profile.buttons = profile.buttons.map { button in
+            var fresh = button
+            fresh.id = UUID()
+            return fresh
+        }
+        profiles.append(profile)
+        activateProfile(profile.id)
+        hapticMedium()
+        return true
+    }
+
     // MARK: Sending
 
     func padPress(_ button: PadButton) {
@@ -1739,8 +1790,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
         // Gentle pointer acceleration: slow finger = precision, fast = distance.
         let speed = hypot(delta.width, delta.height)
         let accel = min(2.2, 0.7 + speed / 9)
-        let dx = delta.width * cursorSensitivity * accel
-        let dy = delta.height * cursorSensitivity * accel
+        let sensitivity = effectiveSensitivity
+        let dx = delta.width * sensitivity * accel
+        let dy = delta.height * sensitivity * accel
         cursorPosition = clamp(CGPoint(x: cursorPosition.x + dx, y: cursorPosition.y + dy))
         js("window.__gb && __gb.move(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(f(dx)), \(f(dy)))")
         wakeCursor()
@@ -2127,8 +2179,15 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
             self.applyKeyboardSuppression()
             self.applyForceZoom()
             self.applyFPSMeter()
-            // A fresh document has none of the focus styling we applied.
-            self.gameFocused = false
+            // Only the tab on screen: a background tab finishing its load
+            // says nothing about what the user is looking at.
+            if !self.tabs.isEmpty, webView === self.webView {
+                // A fresh document has none of the focus styling we applied.
+                self.gameFocused = false
+                // "Open the game and play": a profile can ask for the game to
+                // be blown up as soon as its page is ready.
+                if self.activeProfile?.autoFocusGame == true { self.toggleGameFocus() }
+            }
 
             // Restore the saved scroll position after a relaunch.
             if let tab = self.tabs.first(where: { $0.webView === webView }),

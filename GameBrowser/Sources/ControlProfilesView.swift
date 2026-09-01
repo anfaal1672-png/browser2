@@ -9,6 +9,8 @@ struct ControlProfilesView: View {
 
     @State private var renamingID: UUID?
     @State private var draftName = ""
+    /// Short confirmation shown after copy/paste.
+    @State private var note: String?
 
     private let accent = Color.cyan
 
@@ -23,6 +25,7 @@ struct ControlProfilesView: View {
                 VStack(spacing: 14) {
                     header
                     profilesCard
+                    tuningCard
                     siteCard
                     gamepadCard
                 }
@@ -146,6 +149,108 @@ struct ControlProfilesView: View {
             }
             .disabled(viewModel.activeProfile == nil)
             .opacity(viewModel.activeProfile == nil ? 0.4 : 1)
+        }
+    }
+
+    // MARK: - Per-profile tuning
+
+    private var tuningCard: some View {
+        card(icon: "slider.horizontal.3", tint: .purple,
+             title: loc("このプロファイル", "This profile")) {
+            if let profile = viewModel.activeProfile {
+                Toggle(isOn: Binding(
+                    get: { profile.autoFocusGame },
+                    set: { viewModel.setAutoFocusGame($0) }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(loc("開いたらゲームを全画面にする", "Fullscreen the game on open"))
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white)
+                        Text(loc("サイト割り当てと組み合わせると、開くだけで遊べる状態になります",
+                                 "With a site assignment, opening the game is the whole setup"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                }
+                .tint(accent)
+
+                divider
+                slider(loc("ボタンの濃さ", "Pad opacity"),
+                       value: Binding(get: { profile.padOpacity },
+                                      set: { viewModel.setPadOpacity($0) }),
+                       range: 0.25...1, step: 0.05,
+                       display: "\(Int(profile.padOpacity * 100))%")
+
+                Toggle(isOn: Binding(
+                    get: { profile.cursorSensitivity != nil },
+                    set: { on in
+                        viewModel.setProfileSensitivity(on ? viewModel.cursorSensitivity : nil)
+                    }
+                )) {
+                    Text(loc("カーソル感度をこのゲーム用に上書き",
+                             "Override cursor speed for this game"))
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white)
+                }
+                .tint(accent)
+
+                if let sensitivity = profile.cursorSensitivity {
+                    slider(loc("カーソル感度", "Cursor speed"),
+                           value: Binding(get: { sensitivity },
+                                          set: { viewModel.setProfileSensitivity($0) }),
+                           range: 0.5...4.0, step: 0.1,
+                           display: String(format: "%.1fx", sensitivity))
+                }
+
+                divider
+                HStack(spacing: 10) {
+                    smallButton(loc("コピー", "Copy"), icon: "doc.on.doc") {
+                        transient(viewModel.copyActiveProfile()
+                                  ? loc("コピーしました", "Copied")
+                                  : loc("コピーできませんでした", "Couldn't copy"))
+                    }
+                    smallButton(loc("貼り付けて追加", "Paste"), icon: "doc.on.clipboard") {
+                        transient(viewModel.pasteProfile()
+                                  ? loc("読み込みました", "Imported")
+                                  : loc("クリップボードにプロファイルがありません",
+                                        "No profile on the clipboard"))
+                    }
+                }
+                if let note {
+                    Text(note)
+                        .font(.system(size: 11))
+                        .foregroundStyle(accent)
+                }
+            } else {
+                Text(loc("プロファイルを選ぶと編集できます", "Select a profile to tune it"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+        }
+    }
+
+    private func transient(_ message: String) {
+        note = message
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if note == message { note = nil }
+        }
+    }
+
+    private func slider(_ title: String, value: Binding<Double>,
+                        range: ClosedRange<Double>, step: Double,
+                        display: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white)
+                Spacer()
+                Text(display)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(accent)
+            }
+            Slider(value: value, in: range, step: step).tint(accent)
         }
     }
 
