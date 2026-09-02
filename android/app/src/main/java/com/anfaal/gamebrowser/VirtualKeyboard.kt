@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +29,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -234,11 +237,54 @@ private fun ImeToggleKey(viewModel: BrowserViewModel) {
     }
 }
 
-/** Gamepad-style layout: WASD, common game keys, and an arrow cluster. */
+/**
+ * Gamepad-style layout: a number row, WASD, common game keys, and an arrow
+ * cluster. Mirrors VirtualKeyboardView.swift's `gamepadLayout`, including the
+ * shrink-to-fit: the layout has a fixed natural size (540x130), which is wider
+ * than most phones, so it is drawn at that size and scaled down to whatever
+ * width there is - the same thing `scaledGamepad` does with GeometryReader.
+ */
 @Composable
 fun GamepadKeyboard(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val scale = minOf(1f, maxWidth / GAMEPAD_WIDTH)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(GAMEPAD_HEIGHT * scale),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(GAMEPAD_WIDTH)
+                    .height(GAMEPAD_HEIGHT)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        transformOrigin = TransformOrigin(0.5f, 0f)
+                    },
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                // Browser games overwhelmingly bind 1-9 to weapon/item/skill
+                // slots, which the gamepad layout had no way to send at all -
+                // reaching them meant switching to full QWERTY mid-fight.
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    for (d in listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")) {
+                        KeyButton(GbKey.digit(d), viewModel)
+                    }
+                }
+                GamepadClusters(viewModel)
+            }
+        }
+    }
+}
+
+private val GAMEPAD_WIDTH = 540.dp
+private val GAMEPAD_HEIGHT = 130.dp
+
+@Composable
+private fun GamepadClusters(viewModel: BrowserViewModel) {
     Row(
-        modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -251,13 +297,14 @@ fun GamepadKeyboard(viewModel: BrowserViewModel, modifier: Modifier = Modifier) 
         }
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                KeyButton(GbKey.shift, viewModel, sticky = true, width = 62.dp)
                 KeyButton(GbKey.letter("e"), viewModel)
                 KeyButton(GbKey.letter("q"), viewModel)
                 KeyButton(GbKey.letter("r"), viewModel)
                 KeyButton(GbKey.letter("f"), viewModel)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                KeyButton(GbKey.escape, viewModel, width = 60.dp)
+                KeyButton(GbKey.escape, viewModel, width = 62.dp)
                 KeyButton(GbKey.space, viewModel, width = 84.dp)
                 KeyButton(GbKey.enter, viewModel, width = 52.dp)
                 ImeToggleKey(viewModel)

@@ -335,6 +335,42 @@ class TabManager(
                 }
             }
 
+            /**
+             * A failed main-frame load, shown as a real page instead of the
+             * blank screen it used to leave behind. Sub-resource failures (an
+             * ad, an image) are none of the user's business and must not
+             * replace a page that rendered fine.
+             */
+            override fun onReceivedError(
+                view: WebView,
+                request: android.webkit.WebResourceRequest,
+                error: android.webkit.WebResourceError,
+            ) {
+                if (!request.isForMainFrame) return
+                val failing = request.url?.toString() ?: return
+                // A load the user replaced (a new link tapped mid-load) is not
+                // a failure worth a page of its own.
+                if (error.errorCode == android.webkit.WebViewClient.ERROR_UNKNOWN &&
+                    error.description.isNullOrEmpty()
+                ) {
+                    return
+                }
+                val offline = when (error.errorCode) {
+                    android.webkit.WebViewClient.ERROR_HOST_LOOKUP,
+                    android.webkit.WebViewClient.ERROR_CONNECT,
+                    android.webkit.WebViewClient.ERROR_TIMEOUT,
+                    android.webkit.WebViewClient.ERROR_IO,
+                    -> true
+                    else -> false
+                }
+                viewModel.showErrorPage(
+                    view = view,
+                    failingUrl = failing,
+                    offline = offline,
+                    description = error.description?.toString().orEmpty(),
+                )
+            }
+
             override fun onScaleChanged(view: WebView, oldScale: Float, newScale: Float) {
                 tab.pageScale = newScale
                 if (tab.initialScale <= 0f) tab.initialScale = newScale

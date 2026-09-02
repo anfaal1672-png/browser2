@@ -67,6 +67,149 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         Localization.init(appContext)
     }
 
+    // MARK: - Error page
+
+    /**
+     * A failed load used to leave the tab on a blank black screen with no
+     * explanation and nothing to tap - indistinguishable from the app hanging.
+     * Show what went wrong, on the URL that failed, with a retry.
+     *
+     * Loading it with the failing URL as the base URL is the Android
+     * counterpart of iOS's `loadSimulatedRequest`: the URL bar still shows
+     * where the user was going and the retry link is a plain navigation to it.
+     */
+    fun showErrorPage(view: WebView, failingUrl: String, offline: Boolean, description: String) {
+        if (!failingUrl.startsWith("http")) return
+        view.loadDataWithBaseURL(
+            failingUrl,
+            errorPageHtml(failingUrl, offline, description),
+            "text/html",
+            "UTF-8",
+            failingUrl,
+        )
+    }
+
+    /** Dark error page styled like the start page - and like the iOS one. */
+    private fun errorPageHtml(url: String, offline: Boolean, description: String): String {
+        val title = if (offline) {
+            loc("インターネットに接続されていません", "You're offline")
+        } else {
+            loc("ページを開けませんでした", "This page didn't load")
+        }
+        val message = if (offline) {
+            loc(
+                "Wi-Fi またはモバイル通信を確認してから、もう一度お試しください。",
+                "Check your Wi-Fi or mobile connection, then try again.",
+            )
+        } else {
+            htmlEscape(description)
+        }
+        val href = htmlEscape(url)
+        val icon = if (offline) "\uD83D\uDCE1" else "\u26A0\uFE0F"
+        return """
+            <!DOCTYPE html><html><head>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+              body { background:#0b0f14; color:#e8edf2; font-family:sans-serif;
+                     min-height:100vh; display:flex; flex-direction:column; align-items:center;
+                     justify-content:center; text-align:center; padding:32px 24px; }
+              .icon { font-size:42px; margin-bottom:16px; }
+              h1 { font-size:20px; font-weight:700; }
+              .msg { color:#9aa7b4; font-size:14px; line-height:1.55; margin-top:10px; max-width:420px; }
+              .host { color:#5c6773; font-size:12px; margin-top:16px; max-width:420px;
+                      word-break:break-all; }
+              .retry { margin-top:26px; display:inline-block; text-decoration:none;
+                       color:#0b0f14; background:#39d3f5; font-size:14px; font-weight:600;
+                       padding:11px 26px; border-radius:11px; }
+              .retry:active { background:#2bb9d8; }
+            </style></head><body>
+            <div class="icon">$icon</div>
+            <h1>$title</h1>
+            <p class="msg">$message</p>
+            <p class="host">$href</p>
+            <a class="retry" href="$href">${loc("再試行", "Try again")}</a>
+            </body></html>
+        """.trimIndent()
+    }
+
+    // MARK: - Resetting settings
+
+    /** One settings card's worth of options. Mirrors iOS's SettingsSection. */
+    enum class SettingsSection {
+        BROWSER_MODE, CONTROLS, SEARCH_TABS, APPEARANCE, AUTOFILL,
+        SECURITY, PERMISSIONS, HIGHLIGHTS, BACKGROUND,
+    }
+
+    /**
+     * Put one section back to its factory values, with feedback.
+     *
+     * Browsing data is deliberately left alone - bookmarks, history, saved
+     * passwords and cards, open tabs and downloads all survive. This resets
+     * settings, not the user's own stuff.
+     */
+    fun resetSettings(section: SettingsSection) {
+        applyDefaults(section)
+        hapticMedium()
+    }
+
+    fun resetAllSettings() {
+        for (section in SettingsSection.entries) applyDefaults(section)
+        hapticMedium()
+    }
+
+    private fun applyDefaults(section: SettingsSection) {
+        when (section) {
+            SettingsSection.BROWSER_MODE -> {
+                pcMode = Default.pcMode
+                desktopMode = Default.desktopMode
+            }
+            SettingsSection.CONTROLS -> {
+                controlScheme = Default.controlScheme
+                cursorSensitivity = Default.cursorSensitivity
+                scrollSpeed = Default.scrollSpeed
+                hapticsEnabled = Default.hapticsEnabled
+                showFps = Default.showFps
+                joystickUsesArrows = Default.joystickUsesArrows
+                resetJoystickPosition()
+            }
+            SettingsSection.SEARCH_TABS -> {
+                searchEngine = Default.searchEngine
+                newTabPage = Default.newTabPage
+            }
+            SettingsSection.APPEARANCE -> {
+                appTheme = Default.appTheme
+                appLanguage = Default.appLanguage
+                toolbarOnBottom = Default.toolbarOnBottom
+                showScrollButtons = Default.showScrollButtons
+                desktopMode = pcMode   // its factory value is "match the mode"
+            }
+            SettingsSection.AUTOFILL -> {
+                autofillEnabled = Default.autofillEnabled
+            }
+            SettingsSection.SECURITY -> {
+                adBlockEnabled = Default.adBlockEnabled
+                useFullAdList = Default.useFullAdList
+                trackingLevel = Default.trackingLevel
+                appLockEnabled = Default.appLockEnabled
+                fraudWarning = Default.fraudWarning
+                httpsOnly = Default.httpsOnly
+                blockPopups = Default.blockPopups
+                javaScriptEnabled = Default.javaScriptEnabled
+            }
+            SettingsSection.PERMISSIONS -> {
+                capturePolicy = Default.capturePolicy
+                webNotificationsEnabled = Default.webNotificationsEnabled
+            }
+            SettingsSection.HIGHLIGHTS -> {
+                highlightsEnabled = Default.highlightsEnabled
+            }
+            SettingsSection.BACKGROUND -> {
+                keepAliveInBackground = Default.keepAliveInBackground
+            }
+        }
+    }
+
     // MARK: - Downloads
 
     /**
@@ -179,7 +322,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     var fps by mutableStateOf(0)
         private set
 
-    private var showFpsBacking: Boolean by PersistedBoolean(prefs, "showFPS", false)
+    private var showFpsBacking: Boolean by PersistedBoolean(prefs, "showFPS", Default.showFps)
     var showFps: Boolean
         get() = showFpsBacking
         set(value) {
@@ -298,7 +441,44 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * class of circular-initialization hazard `tabManager`'s own doc comment
      * below describes for `webView`.
      */
-    var newTabPage: NewTabPage by PersistedEnum(prefs, "newTabPage", NewTabPage.entries.toTypedArray(), NewTabPage.HOME)
+    /**
+     * Factory values for every setting. Launch and reset both read these, so
+     * the two cannot drift - previously every default was a literal spelled
+     * out at its point of use, and a reset written against those would have
+     * been a second copy to keep in sync. Mirrors BrowserViewModel.Default on
+     * iOS, value for value.
+     */
+    object Default {
+        const val pcMode = false            // phone mode on a fresh install
+        const val desktopMode = false
+        const val cursorSensitivity = 1.4f
+        const val scrollSpeed = 700f
+        val controlScheme = ControlScheme.CLASSIC
+        const val hapticsEnabled = true
+        const val showFps = false
+        const val joystickUsesArrows = false
+        const val showScrollButtons = true
+        const val appLanguage = 0           // follow the system
+        const val appTheme = 0              // dark
+        const val toolbarOnBottom = false
+        val searchEngine = SearchEngine.GOOGLE
+        val newTabPage = NewTabPage.HOME
+        const val autofillEnabled = true
+        const val adBlockEnabled = true
+        const val useFullAdList = false
+        val trackingLevel = TrackerBlocker.BALANCED
+        const val appLockEnabled = false
+        const val fraudWarning = true
+        const val httpsOnly = true
+        const val blockPopups = false
+        const val javaScriptEnabled = true
+        val capturePolicy = CapturePolicy.ASK
+        const val webNotificationsEnabled = true
+        const val highlightsEnabled = false
+        const val keepAliveInBackground = false
+    }
+
+    var newTabPage: NewTabPage by PersistedEnum(prefs, "newTabPage", NewTabPage.entries.toTypedArray(), Default.newTabPage)
 
     private var bookmarksBacking: List<Bookmark> by mutableStateOf(loadBookmarks())
     var bookmarks: List<Bookmark>
@@ -316,7 +496,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * would hit an unconstructed `PersistedBoolean` delegate and crash on the
      * very first launch.
      */
-    private var desktopModeBacking: Boolean by PersistedBoolean(prefs, "desktopMode", false)
+    private var desktopModeBacking: Boolean by PersistedBoolean(prefs, "desktopMode", Default.desktopMode)
     var desktopMode: Boolean
         get() = desktopModeBacking
         set(value) {
@@ -363,7 +543,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     // MARK: - Settings (persisted)
 
-    private var pcModeBacking: Boolean by PersistedBoolean(prefs, "pcMode", false)
+    private var pcModeBacking: Boolean by PersistedBoolean(prefs, "pcMode", Default.pcMode)
 
     /** App-level mode: phone = plain touch browser without the control bar, PC = gaming browser with virtual mouse tools + desktop UA. Mirrors BrowserViewModel.swift's `pcMode` didSet. */
     var pcMode: Boolean
@@ -381,26 +561,26 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
             if (desktopMode != value) desktopMode = value
         }
-    var controlScheme: ControlScheme by PersistedEnum(prefs, "controlScheme", ControlScheme.entries.toTypedArray(), ControlScheme.CLASSIC)
-    var cursorSensitivity: Float by PersistedFloat(prefs, "cursorSensitivity", 1.4f)
-    var scrollSpeed: Float by PersistedFloat(prefs, "scrollSpeed", 700f)
-    var hapticsEnabled: Boolean by PersistedBoolean(prefs, "hapticsEnabled", true)
-    var joystickUsesArrows: Boolean by PersistedBoolean(prefs, "joystickUsesArrows", false)
-    var searchEngine: SearchEngine by PersistedEnum(prefs, "searchEngine", SearchEngine.entries.toTypedArray(), SearchEngine.GOOGLE)
+    var controlScheme: ControlScheme by PersistedEnum(prefs, "controlScheme", ControlScheme.entries.toTypedArray(), Default.controlScheme)
+    var cursorSensitivity: Float by PersistedFloat(prefs, "cursorSensitivity", Default.cursorSensitivity)
+    var scrollSpeed: Float by PersistedFloat(prefs, "scrollSpeed", Default.scrollSpeed)
+    var hapticsEnabled: Boolean by PersistedBoolean(prefs, "hapticsEnabled", Default.hapticsEnabled)
+    var joystickUsesArrows: Boolean by PersistedBoolean(prefs, "joystickUsesArrows", Default.joystickUsesArrows)
+    var searchEngine: SearchEngine by PersistedEnum(prefs, "searchEngine", SearchEngine.entries.toTypedArray(), Default.searchEngine)
     // newTabPage is declared above, before `tabManager` — see its doc comment.
-    var appTheme: Int by PersistedInt(prefs, "appTheme", 0)
-    var appLanguage: Int by PersistedInt(prefs, "appLanguage", 0)
-    var toolbarOnBottom: Boolean by PersistedBoolean(prefs, "toolbarOnBottom", false)
-    var showScrollButtons: Boolean by PersistedBoolean(prefs, "showScrollButtons", true)
-    var autofillEnabled: Boolean by PersistedBoolean(prefs, "autofillEnabled", true)
-    var appLockEnabled: Boolean by PersistedBoolean(prefs, "appLockEnabled", false)
-    var fraudWarning: Boolean by PersistedBoolean(prefs, "fraudWarning", true)
-    var httpsOnly: Boolean by PersistedBoolean(prefs, "httpsOnly", true)
-    var blockPopups: Boolean by PersistedBoolean(prefs, "blockPopups", false)
-    var javaScriptEnabled: Boolean by PersistedBoolean(prefs, "javaScriptEnabled", true)
-    var capturePolicy: CapturePolicy by PersistedEnum(prefs, "capturePolicy", CapturePolicy.entries.toTypedArray(), CapturePolicy.ASK)
-    var webNotificationsEnabled: Boolean by PersistedBoolean(prefs, "webNotificationsEnabled", true)
-    private var highlightsEnabledBacking: Boolean by PersistedBoolean(prefs, "highlightsEnabled", false)
+    var appTheme: Int by PersistedInt(prefs, "appTheme", Default.appTheme)
+    var appLanguage: Int by PersistedInt(prefs, "appLanguage", Default.appLanguage)
+    var toolbarOnBottom: Boolean by PersistedBoolean(prefs, "toolbarOnBottom", Default.toolbarOnBottom)
+    var showScrollButtons: Boolean by PersistedBoolean(prefs, "showScrollButtons", Default.showScrollButtons)
+    var autofillEnabled: Boolean by PersistedBoolean(prefs, "autofillEnabled", Default.autofillEnabled)
+    var appLockEnabled: Boolean by PersistedBoolean(prefs, "appLockEnabled", Default.appLockEnabled)
+    var fraudWarning: Boolean by PersistedBoolean(prefs, "fraudWarning", Default.fraudWarning)
+    var httpsOnly: Boolean by PersistedBoolean(prefs, "httpsOnly", Default.httpsOnly)
+    var blockPopups: Boolean by PersistedBoolean(prefs, "blockPopups", Default.blockPopups)
+    var javaScriptEnabled: Boolean by PersistedBoolean(prefs, "javaScriptEnabled", Default.javaScriptEnabled)
+    var capturePolicy: CapturePolicy by PersistedEnum(prefs, "capturePolicy", CapturePolicy.entries.toTypedArray(), Default.capturePolicy)
+    var webNotificationsEnabled: Boolean by PersistedBoolean(prefs, "webNotificationsEnabled", Default.webNotificationsEnabled)
+    private var highlightsEnabledBacking: Boolean by PersistedBoolean(prefs, "highlightsEnabled", Default.highlightsEnabled)
     var highlightsEnabled: Boolean
         get() = highlightsEnabledBacking
         set(value) {
@@ -426,7 +606,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private var adBlockEnabledBacking: Boolean by PersistedBoolean(prefs, "adBlockEnabled", true)
+    private var adBlockEnabledBacking: Boolean by PersistedBoolean(prefs, "adBlockEnabled", Default.adBlockEnabled)
     var adBlockEnabled: Boolean
         get() = adBlockEnabledBacking
         set(value) {
@@ -434,7 +614,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             webView?.reload()
         }
 
-    private var useFullAdListBacking: Boolean by PersistedBoolean(prefs, "useFullAdList", false)
+    private var useFullAdListBacking: Boolean by PersistedBoolean(prefs, "useFullAdList", Default.useFullAdList)
     var useFullAdList: Boolean
         get() = useFullAdListBacking
         set(value) {
@@ -443,13 +623,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             webView?.reload()
         }
 
-    var trackingLevel: Int by PersistedInt(prefs, "trackingLevel", TrackerBlocker.BALANCED)
+    var trackingLevel: Int by PersistedInt(prefs, "trackingLevel", Default.trackingLevel)
 
     /** Runtime lock state (not itself persisted — reset to appLockEnabled's
      *  value at process start, same as ContentView's `@State isLocked` init). */
     var isLocked by mutableStateOf(false)
 
-    private var keepAliveBacking: Boolean by PersistedBoolean(prefs, "keepAliveInBackground", false)
+    private var keepAliveBacking: Boolean by PersistedBoolean(prefs, "keepAliveInBackground", Default.keepAliveInBackground)
     var keepAliveInBackground: Boolean
         get() = keepAliveBacking
         set(value) {
