@@ -62,6 +62,186 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet { applyKeyboardSuppression() }
     }
 
+    // MARK: - Downloads
+
+    let downloads = DownloadManager()
+    @Published var showDownloads = false
+    /// Mirrored so the toolbar can badge itself: SwiftUI doesn't observe
+    /// objects nested inside an observed object.
+    @Published var activeDownloads = 0
+    private var cancellables = Set<AnyCancellable>()
+
+    // MARK: - Toast
+
+    /// Brief confirmation for things that otherwise happen invisibly.
+    @Published var toastText: String?
+    @Published var toastIcon: String = "checkmark.circle.fill"
+    private var toastTask: Task<Void, Never>?
+
+    func toast(_ text: String, icon: String = "checkmark.circle.fill") {
+        toastText = text
+        toastIcon = icon
+        toastTask?.cancel()
+        toastTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.4))
+            guard !Task.isCancelled else { return }
+            self?.toastText = nil
+        }
+    }
+
+    // MARK: - Link under the cursor (right-click menu)
+
+    /// Link the page reported under the pointer on a right-click, so the app
+    /// can offer a real menu — WebKit's own long-press menu never appears in
+    /// cursor mode, because the trackpad overlay takes the touches.
+    struct LinkTarget: Equatable {
+        var url: URL
+        var text: String
+    }
+    @Published var linkTarget: LinkTarget?
+
+    func openLinkInNewTab() {
+        guard let target = linkTarget else { return }
+        newTab(url: target.url)
+        toast(loc("新しいタブで開きました", "Opened in a new tab"), icon: "square.on.square")
+        linkTarget = nil
+    }
+
+    func copyLink() {
+        guard let target = linkTarget else { return }
+        UIPasteboard.general.string = target.url.absoluteString
+        toast(loc("リンクをコピーしました", "Link copied"), icon: "doc.on.doc")
+        linkTarget = nil
+    }
+
+    func downloadLink() {
+        guard let target = linkTarget else { return }
+        startDownload(target.url)
+        linkTarget = nil
+    }
+
+    /// Download a URL directly (from the link menu). WebKit fetches it and
+    /// hands back a WKDownload through the delegate below.
+    func startDownload(_ url: URL) {
+        guard !tabs.isEmpty else { return }
+        webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
+            Task { @MainActor in
+                guard let self else { return }
+                download.delegate = self.downloads
+                self.downloads.begin(download, suggested: nil, source: url)
+                self.toast(loc("ダウンロードを開始しました", "Download started"),
+                           icon: "arrow.down.circle.fill")
+            }
+        }
+    }
+
+    // MARK: - Focus the game / FPS meter
+
+    /// True while the page's game element is blown up to fill the screen.
+    @Published var gameFocused = false
+    /// Frames per second reported by the page's own animation loop.
+    @Published var fps: Int = 0
+    @Published var showFPS: Bool {
+        didSet {
+            UserDefaults.standard.set(showFPS, forKey: "showFPS")
+            if !showFPS { fps = 0 }
+            applyFPSMeter()
+        }
+    }
+
+    func applyFPSMeter() {
+        guard !tabs.isEmpty else { return }
+        webView.evaluateJavaScript(
+            "window.__gb && __gb.setFpsMeter(\(showFPS))", completionHandler: nil)
+    }
+
+    /// Fill the screen with the game itself. Most browser-game pages wrap a
+    /// small canvas or iframe in ads and site chrome; this promotes that one
+    /// element and hides everything around it. Tapping again restores it.
+    func toggleGameFocus() {
+        guard !tabs.isEmpty else { return }
+        let focusing = !gameFocused
+        webView.evaluateJavaScript(
+            focusing ? "window.__gb && __gb.focusGame()" : "window.__gb && __gb.unfocusGame()"
+        ) { [weak self] result, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let succeeded = (result as? Bool) ?? false
+                if focusing {
+                    // Nothing game-shaped on the page — say so by staying put
+                    // rather than silently pretending it worked.
+                    self.gameFocused = succeeded
+                    if succeeded {
+                        self.immersive = true
+                        self.hapticMedium()
+                    }
+                } else {
+                    self.gameFocused = false
+                    self.hapticLight()
+                }
+            }
+        }
+    }
+
+    /// Allow pinch-zoom even on pages that ask not to be scaled — nearly
+    /// every game does, and a desktop layout on a phone often needs it.
+    @Published var forceZoom: Bool {
+        didSet {
+            UserDefaults.standard.set(forceZoom, forKey: "forceZoom")
+            applyViewportMode()
+        }
+    }
+
+    /// Desktop presentation wins over the zoom override — it needs the
+    /// viewport for the wide layout, and a desktop-mode page can be pinched
+    /// anyway. Only one of the two ever patches the page.
+    func applyViewportMode(in target: WKWebView? = nil) {
+        guard !tabs.isEmpty else { return }
+        let mode = desktopMode ? "desktop" : (forceZoom ? "zoom" : "none")
+        // Defaults to the active tab; the page that just finished loading
+        // passes itself, since that may be a background tab.
+        (target ?? webView).evaluateJavaScript(
+            "window.__gb && __gb.setViewportMode('\(mode)')", completionHandler: nil)
+    }
+
+    /// Pinch handled by the trackpad overlay: in cursor mode the overlay takes
+    /// every touch, so the web view never sees a pinch of its own and the
+    /// page simply could not be zoomed. `point` is the midpoint between the
+    /// fingers, which stays put while the page scales around it.
+    func pinchZoom(by factor: CGFloat, at point: CGPoint) {
+        guard !tabs.isEmpty else { return }
+        let scrollView = webView.scrollView
+        guard scrollView.maximumZoomScale > scrollView.minimumZoomScale else { return }
+        let current = scrollView.zoomScale
+        let target = min(max(current * factor, scrollView.minimumZoomScale),
+                         scrollView.maximumZoomScale)
+        guard abs(target - current) > 0.0005 else { return }
+
+        let offset = scrollView.contentOffset
+        let contentPoint = CGPoint(x: (offset.x + point.x) / current,
+                                   y: (offset.y + point.y) / current)
+        scrollView.setZoomScale(target, animated: false)
+
+        var newOffset = CGPoint(x: contentPoint.x * target - point.x,
+                                y: contentPoint.y * target - point.y)
+        let maxX = max(scrollView.contentSize.width - scrollView.bounds.width, 0)
+        let maxY = max(scrollView.contentSize.height - scrollView.bounds.height, 0)
+        newOffset.x = min(max(newOffset.x, 0), maxX)
+        newOffset.y = min(max(newOffset.y, 0), maxY)
+        scrollView.setContentOffset(newOffset, animated: false)
+    }
+
+    var isZoomed: Bool {
+        guard !tabs.isEmpty else { return false }
+        return webView.scrollView.zoomScale > webView.scrollView.minimumZoomScale + 0.01
+    }
+
+    func resetZoom() {
+        guard !tabs.isEmpty else { return }
+        webView.scrollView.setZoomScale(webView.scrollView.minimumZoomScale, animated: true)
+        hapticLight()
+    }
+
     /// In cursor mode, page focus must not open the iOS keyboard.
     func applyKeyboardSuppression() {
         guard !tabs.isEmpty else { return }
@@ -155,6 +335,367 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     @Published var hapticsEnabled: Bool {
         didSet { UserDefaults.standard.set(hapticsEnabled, forKey: "hapticsEnabled") }
+    }
+
+    // MARK: - Custom control pads
+
+    /// Saved layouts. Every game binds different keys, and the fixed on-screen
+    /// keyboard can't reach most of them — so the user builds their own pad.
+    @Published var profiles: [ControlProfile] {
+        // Dragging a button rewrites this on every touch sample, and encoding
+        // every profile to JSON at 120Hz is not free — coalesce the writes.
+        didSet { saveProfilesDebounced() }
+    }
+    private var saveProfilesTask: Task<Void, Never>?
+
+    private func saveProfilesDebounced() {
+        saveProfilesTask?.cancel()
+        let snapshot = profiles
+        saveProfilesTask = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            ControlProfileStore.saveProfiles(snapshot)
+        }
+    }
+
+    /// Write immediately — the app may not get another chance.
+    private func saveProfilesNow() {
+        saveProfilesTask?.cancel()
+        ControlProfileStore.saveProfiles(profiles)
+    }
+    @Published var activeProfileID: UUID? {
+        didSet { ControlProfileStore.saveActive(activeProfileID) }
+    }
+    /// Draw the active profile's buttons over the page.
+    @Published var padVisible: Bool {
+        didSet {
+            UserDefaults.standard.set(padVisible, forKey: "padVisible")
+            if !padVisible {
+                releasePadButtons()
+                padEditing = false
+            }
+        }
+    }
+    /// Arrange mode: buttons are draggable and tapping one opens its settings.
+    @Published var padEditing: Bool = false {
+        didSet { if padEditing { releasePadButtons() } }
+    }
+    /// Buttons currently latched down (sticky).
+    @Published var padLatched: Set<UUID> = []
+    @Published var selectedPadButton: UUID?
+    @Published var showPadInspector = false
+    @Published var showProfiles = false
+
+    /// host → profile id, so a game's controls come back on their own.
+    private var siteProfiles: [String: String] = ControlProfileStore.loadAssignments()
+    private var turboTimers: [UUID: Timer] = [:]
+
+    var activeProfile: ControlProfile? { profiles.first { $0.id == activeProfileID } }
+
+    private func updateProfile(_ mutate: (inout ControlProfile) -> Void) {
+        guard let id = activeProfileID,
+              let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&profiles[index])
+    }
+
+    func activateProfile(_ id: UUID?) {
+        releasePadButtons()
+        activeProfileID = id
+        selectedPadButton = nil
+        if let profile = activeProfile {
+            joystickUsesArrows = profile.joystickArrows
+            if profile.showJoystick { joystickVisible = true }
+            padVisible = true
+        }
+        hapticSelection()
+    }
+
+    func createProfile() {
+        let profile = ControlProfile(name: loc("新しいプロファイル", "New profile"))
+        profiles.append(profile)
+        activateProfile(profile.id)
+    }
+
+    func duplicateProfile(_ id: UUID) {
+        guard let source = profiles.first(where: { $0.id == id }) else { return }
+        var copy = source
+        copy.id = UUID()
+        copy.name = source.name + loc(" のコピー", " copy")
+        // Fresh button ids, or the two profiles would share latch/turbo state.
+        copy.buttons = source.buttons.map { button in
+            var fresh = button
+            fresh.id = UUID()
+            return fresh
+        }
+        profiles.append(copy)
+        activateProfile(copy.id)
+    }
+
+    func deleteProfile(_ id: UUID) {
+        profiles.removeAll { $0.id == id }
+        siteProfiles = siteProfiles.filter { $0.value != id.uuidString }
+        ControlProfileStore.saveAssignments(siteProfiles)
+        if activeProfileID == id { activateProfile(profiles.first?.id) }
+    }
+
+    func renameProfile(_ id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = profiles.firstIndex(where: { $0.id == id })
+        else { return }
+        profiles[index].name = trimmed
+    }
+
+    func addPresetProfiles() {
+        profiles.append(contentsOf: ControlProfile.presets())
+        hapticMedium()
+    }
+
+    // MARK: Buttons
+
+    func addPadButton() {
+        guard activeProfileID != nil else { return }
+        let new = PadButton(keys: ["Space"], x: 0.5, y: 0.5)
+        updateProfile { $0.buttons.append(new) }
+        selectedPadButton = new.id
+        showPadInspector = true
+        hapticLight()
+    }
+
+    func movePadButton(_ id: UUID, to point: CGPoint) {
+        updateProfile { profile in
+            guard let index = profile.buttons.firstIndex(where: { $0.id == id }) else { return }
+            profile.buttons[index].x = min(max(point.x, 0.04), 0.96)
+            profile.buttons[index].y = min(max(point.y, 0.04), 0.96)
+        }
+    }
+
+    func updatePadButton(_ id: UUID, _ mutate: (inout PadButton) -> Void) {
+        updateProfile { profile in
+            guard let index = profile.buttons.firstIndex(where: { $0.id == id }) else { return }
+            mutate(&profile.buttons[index])
+        }
+    }
+
+    func deletePadButton(_ id: UUID) {
+        releasePadButton(id)
+        updateProfile { $0.buttons.removeAll { $0.id == id } }
+        if selectedPadButton == id { selectedPadButton = nil }
+    }
+
+    /// Several keys on one button are held together — Shift+W is sprint.
+    func addBinding(_ name: String, to id: UUID) {
+        updatePadButton(id) { button in
+            if PadKeyName.mouseNames.contains(name) {
+                button.mouseButton = (name == PadKeyName.rightClick) ? 2 : 0
+                button.keys = []
+            } else {
+                button.mouseButton = nil
+                if !button.keys.contains(name) { button.keys.append(name) }
+            }
+        }
+        hapticLight()
+    }
+
+    func removeBinding(_ name: String, from id: UUID) {
+        updatePadButton(id) { button in
+            if PadKeyName.mouseNames.contains(name) {
+                button.mouseButton = nil
+            } else {
+                button.keys.removeAll { $0 == name }
+            }
+        }
+    }
+
+    // MARK: Per-site assignment
+
+    func siteProfileID(for host: String) -> UUID? {
+        siteProfiles[host].flatMap { UUID(uuidString: $0) }
+    }
+
+    func siteProfileName(for host: String) -> String? {
+        guard let id = siteProfileID(for: host) else { return nil }
+        return profiles.first { $0.id == id }?.name
+    }
+
+    func assignCurrentProfileToSite(_ pinned: Bool) {
+        guard let host = currentURL?.host else { return }
+        if pinned, let id = activeProfileID {
+            siteProfiles[host] = id.uuidString
+        } else {
+            siteProfiles.removeValue(forKey: host)
+        }
+        ControlProfileStore.saveAssignments(siteProfiles)
+        hapticLight()
+    }
+
+    /// Bring back the profile pinned to this site, if it isn't already on.
+    fileprivate func applySiteProfile(for url: URL?) {
+        guard let host = url?.host,
+              let id = siteProfileID(for: host),
+              id != activeProfileID,
+              profiles.contains(where: { $0.id == id }) else { return }
+        activateProfile(id)
+    }
+
+    // MARK: Physical controller mapping
+
+    func gamepadBinding(_ slot: GamepadSlot) -> String {
+        activeProfile?.gamepadKey(slot) ?? slot.defaultKey
+    }
+
+    func setGamepadBinding(_ slot: GamepadSlot, to name: String) {
+        updateProfile { $0.gamepadMap[slot.rawValue] = name }
+        hapticLight()
+    }
+
+    func resetGamepadMapping() {
+        updateProfile { $0.gamepadMap = [:] }
+        hapticLight()
+    }
+
+    // MARK: Per-profile tuning
+
+    /// The profile's own cursor speed, or the global one when it has none.
+    var effectiveSensitivity: Double { activeProfile?.cursorSensitivity ?? cursorSensitivity }
+
+    func setProfileSensitivity(_ value: Double?) {
+        updateProfile { $0.cursorSensitivity = value }
+    }
+
+    func setPadOpacity(_ value: Double) {
+        updateProfile { $0.padOpacity = value }
+    }
+
+    func setAutoFocusGame(_ on: Bool) {
+        updateProfile { $0.autoFocusGame = on }
+        hapticLight()
+    }
+
+    /// Back to the values a new profile starts with — the buttons themselves
+    /// and the controller mapping are left alone.
+    func resetProfileTuning() {
+        let fresh = ControlProfile(name: "")
+        updateProfile { profile in
+            profile.padOpacity = fresh.padOpacity
+            profile.cursorSensitivity = fresh.cursorSensitivity
+            profile.autoFocusGame = fresh.autoFocusGame
+        }
+        hapticMedium()
+    }
+
+    /// Copy the active profile as JSON — a layout is worth sharing, and worth
+    /// keeping somewhere that survives a reinstall.
+    @discardableResult
+    func copyActiveProfile() -> Bool {
+        guard let profile = activeProfile,
+              let data = try? JSONEncoder().encode(profile),
+              let json = String(data: data, encoding: .utf8) else { return false }
+        UIPasteboard.general.string = json
+        hapticMedium()
+        return true
+    }
+
+    /// Load a profile from JSON on the clipboard, as a new copy.
+    @discardableResult
+    func pasteProfile() -> Bool {
+        guard let text = UIPasteboard.general.string,
+              let data = text.data(using: .utf8),
+              var profile = try? JSONDecoder().decode(ControlProfile.self, from: data)
+        else { return false }
+        // Fresh ids so pasting the same layout twice gives two profiles
+        // rather than two things claiming to be the same one.
+        profile.id = UUID()
+        profile.buttons = profile.buttons.map { button in
+            var fresh = button
+            fresh.id = UUID()
+            return fresh
+        }
+        profiles.append(profile)
+        activateProfile(profile.id)
+        hapticMedium()
+        return true
+    }
+
+    // MARK: Sending
+
+    func padPress(_ button: PadButton) {
+        hapticLight()
+        if button.sticky {
+            if padLatched.contains(button.id) {
+                releasePadButton(button.id)
+            } else {
+                padLatched.insert(button.id)
+                engage(button)
+                if button.turbo { startTurbo(button) }
+            }
+            return
+        }
+        engage(button)
+        if button.turbo { startTurbo(button) }
+    }
+
+    func padRelease(_ button: PadButton) {
+        guard !button.sticky else { return }   // a latched button waits for the next tap
+        stopTurbo(button.id)
+        disengage(button)
+    }
+
+    private func engage(_ button: PadButton) {
+        if let mouse = button.mouseButton {
+            mouseDown(button: mouse)
+            return
+        }
+        for name in button.keys {
+            if let key = KeyCatalog.key(name) { keyDown(key) }
+        }
+    }
+
+    private func disengage(_ button: PadButton) {
+        if let mouse = button.mouseButton {
+            mouseUp(button: mouse)
+            return
+        }
+        // Reverse order so a modifier in a combo is released last.
+        for name in button.keys.reversed() {
+            if let key = KeyCatalog.key(name) { keyUp(key) }
+        }
+    }
+
+    /// Turbo: re-press on an interval for games that expect mashing.
+    private func startTurbo(_ button: PadButton) {
+        stopTurbo(button.id)
+        let timer = Timer(timeInterval: 0.09, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.disengage(button)
+                self.engage(button)
+            }
+        }
+        // .common, so mashing keeps firing while a gesture is tracking.
+        RunLoop.main.add(timer, forMode: .common)
+        turboTimers[button.id] = timer
+    }
+
+    private func stopTurbo(_ id: UUID) {
+        turboTimers[id]?.invalidate()
+        turboTimers.removeValue(forKey: id)
+    }
+
+    private func releasePadButton(_ id: UUID) {
+        stopTurbo(id)
+        padLatched.remove(id)
+        if let button = activeProfile?.buttons.first(where: { $0.id == id }) { disengage(button) }
+    }
+
+    /// Drop everything the pads are holding — hiding them, editing, switching
+    /// tabs or profiles must never leave a key or mouse button stuck down.
+    func releasePadButtons() {
+        for (_, timer) in turboTimers { timer.invalidate() }
+        turboTimers.removeAll()
+        let latched = padLatched
+        padLatched.removeAll()
+        guard let profile = activeProfile else { return }
+        for button in profile.buttons where latched.contains(button.id) { disengage(button) }
     }
 
     // MARK: - Security settings
@@ -383,7 +924,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     fileprivate func handleCredentialSubmitted(username: String, password: String) {
-        guard autofillEnabled, !password.isEmpty, !currentHost.isEmpty else { return }
+        guard autofillEnabled, !isPrivateTab, !password.isEmpty, !currentHost.isEmpty
+        else { return }
         // Already saved identically? Nothing to do.
         if credentials.contains(where: {
             $0.domain == currentHost && $0.username == username && $0.password == password
@@ -452,7 +994,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         if !types.isEmpty {
             WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) {}
         }
-        if clearHistoryFlag { clearHistory() }
+        if clearHistoryFlag {
+            clearHistory()
+            clearTabSnapshots()
+        }
     }
 
     /// What to do when a site asks for camera/microphone access.
@@ -605,7 +1150,24 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     private var gamepad: GamepadController?
     @Published var pressedKeys: Set<InputBridge.Key> = []
-    @Published var immersive: Bool = false
+    @Published var immersive: Bool = false {
+        didSet { updateIdleTimer() }
+    }
+
+    /// True while a physical game controller is attached (set by GamepadController).
+    var gamepadConnected: Bool = false {
+        didSet { if gamepadConnected != oldValue { updateIdleTimer() } }
+    }
+
+    /// Playing with a controller produces no touches at all, so iOS dims and
+    /// then locks the screen in the middle of a game — the same happens
+    /// during a long cutscene or an idle/strategy game. Hold the idle timer
+    /// off while the user is clearly playing: a controller is attached, or
+    /// the app is in fullscreen (immersive) mode. Both are explicit signals,
+    /// so ordinary browsing still sleeps normally.
+    private func updateIdleTimer() {
+        UIApplication.shared.isIdleTimerDisabled = immersive || gamepadConnected
+    }
 
     @Published var cursorSensitivity: Double {
         didSet { UserDefaults.standard.set(cursorSensitivity, forKey: "cursorSensitivity") }
@@ -683,10 +1245,39 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var desktopMode: Bool {
         didSet {
             UserDefaults.standard.set(desktopMode, forKey: "desktopMode")
-            for tab in tabs {
-                tab.webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
+            applyContentMode()
+        }
+    }
+
+    /// Switch every tab between the desktop and mobile presentation.
+    ///
+    /// This has to *re-navigate*, not reload. WebKit fixes a page's content
+    /// mode — and with it the layout viewport, 980pt wide for desktop instead
+    /// of the device's width — when the navigation that created the page
+    /// begins; reload() re-renders the page in the mode it already had. The
+    /// desktop user agent went out while the layout stayed phone-width, so a
+    /// responsive site kept serving and laying out its mobile design: turning
+    /// on PC mode visibly did nothing. The request also bypasses the cache,
+    /// since a server that already answered with mobile HTML would otherwise
+    /// just hand the same document back.
+    private func applyContentMode() {
+        for tab in tabs {
+            tab.webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
+        }
+        guard tabs.indices.contains(activeTabIndex) else { return }
+
+        // Background tabs re-navigate the next time they are shown, rather
+        // than all reloading at once behind the user's back.
+        for (index, tab) in tabs.enumerated() where index != activeTabIndex {
+            if let url = tab.webView.url, url.scheme == "http" || url.scheme == "https" {
+                tab.pendingLoad = url
             }
-            webView.reload()
+        }
+
+        if let url = webView.url, url.scheme == "http" || url.scheme == "https" {
+            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        } else {
+            webView.reload()   // the start page and about: pages have no URL to re-request
         }
     }
 
@@ -719,14 +1310,40 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let tiles = bookmarks.map { bookmark -> String in
             let host = URL(string: bookmark.url)?.host ?? ""
             let initial = String(bookmark.title.prefix(1)).uppercased()
+            // Bookmark titles come from whatever <title> the site served, so
+            // they are untrusted markup here, not text.
             return """
-            <a class="tile" href="\(bookmark.url)">
-              <div class="icon"><img src="https://www.google.com/s2/favicons?domain=\(host)&sz=64" \
-            onerror="this.remove()" alt=""><span>\(initial)</span></div>
-              <div class="name">\(bookmark.title)</div>
+            <a class="tile" href="\(Self.escapeHTML(bookmark.url))">
+              <div class="icon"><img src="https://www.google.com/s2/favicons?domain=\
+            \(Self.escapeHTML(host))&sz=64" \
+            onerror="this.remove()" alt=""><span>\(Self.escapeHTML(initial))</span></div>
+              <div class="name">\(Self.escapeHTML(bookmark.title))</div>
             </a>
             """
         }.joined()
+        let subtitle = loc("ブックマークから開く、または上のバーで検索",
+                           "Open a bookmark, or search from the bar above")
+
+        // Recently visited sites, newest first and one entry per host, so the
+        // game you were playing yesterday is one tap away.
+        var seenHosts = Set<String>()
+        let recents = history.reversed().compactMap { entry -> String? in
+            guard let host = URL(string: entry.url)?.host, !seenHosts.contains(host),
+                  !bookmarks.contains(where: { $0.url == entry.url }) else { return nil }
+            seenHosts.insert(host)
+            return """
+            <a class="chip" href="\(Self.escapeHTML(entry.url))">
+              <img src="https://www.google.com/s2/favicons?domain=\
+            \(Self.escapeHTML(host))&sz=32" onerror="this.remove()" alt="">
+              <span>\(Self.escapeHTML(host))</span>
+            </a>
+            """
+        }.prefix(8).joined()
+
+        let recentSection = recents.isEmpty ? "" : """
+        <div class="section">\(loc("最近開いたサイト", "Recently visited"))</div>
+        <div class="chips">\(recents)</div>
+        """
 
         return """
         <!DOCTYPE html><html><head>
@@ -752,10 +1369,20 @@ final class BrowserViewModel: NSObject, ObservableObject {
           .icon img { width:28px; height:28px; position:absolute; }
           .name { font-size:12px; max-width:100%; overflow:hidden;
                   text-overflow:ellipsis; white-space:nowrap; }
+          .section { width:100%; max-width:560px; margin:30px 0 12px; font-size:12px;
+                     font-weight:600; letter-spacing:.4px; color:#7b8794; }
+          .chips { display:flex; flex-wrap:wrap; gap:8px; width:100%; max-width:560px; }
+          .chip { display:flex; align-items:center; gap:7px; padding:8px 12px;
+                  border-radius:999px; background:#141b23; border:1px solid #1f2937;
+                  text-decoration:none; color:#c7d2dd; font-size:12px; max-width:100%; }
+          .chip:active { background:#1d2733; }
+          .chip img { width:16px; height:16px; border-radius:4px; }
+          .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         </style></head><body>
         <h1>GameBrowser</h1>
-        <p class="sub">ブックマークから開く、または上のバーで検索</p>
+        <p class="sub">\(subtitle)</p>
         <div class="grid">\(tiles)</div>
+        \(recentSection)
         </body></html>
         """
     }
@@ -764,40 +1391,241 @@ final class BrowserViewModel: NSObject, ObservableObject {
         (webView ?? self.webView).loadHTMLString(startPageHTML(), baseURL: nil)
     }
 
+    // MARK: - Error page
+
+    static func escapeHTML(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+
+    /// A failed load used to leave the tab on a blank black screen with no
+    /// explanation and nothing to tap — indistinguishable from the app
+    /// hanging. Show what went wrong, on the URL that failed, with a retry.
+    fileprivate func showErrorPage(for error: Error, in webView: WKWebView) {
+        let ns = error as NSError
+        // These are not failures: a load the user or the app replaced (a new
+        // link tapped mid-load), and the policy cancel that HTTPS-first
+        // performs on every plain-http navigation before reissuing it.
+        if ns.domain == NSURLErrorDomain, ns.code == NSURLErrorCancelled { return }
+        if ns.domain == "WebKitErrorDomain", ns.code == 101 || ns.code == 102 || ns.code == 204 {
+            return
+        }
+        // Only ever act on the URL the error itself names. Falling back to
+        // webView.url would risk replacing the page that is still committed
+        // and perfectly readable underneath a failed navigation.
+        let failing = (ns.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+            ?? (ns.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap { URL(string: $0) }
+        guard let failed = failing,
+              failed.scheme == "http" || failed.scheme == "https" else { return }
+        // loadSimulatedRequest keeps `failed` as the web view's URL, so the
+        // URL bar still shows where the user was going, back/forward stay
+        // consistent, and the retry link is a plain navigation to it.
+        webView.loadSimulatedRequest(
+            URLRequest(url: failed),
+            responseHTML: Self.errorPageHTML(for: ns, url: failed)
+        )
+    }
+
+    /// Dark error page styled like the start page.
+    private static func errorPageHTML(for error: NSError, url: URL) -> String {
+        let offline = error.domain == NSURLErrorDomain && [
+            NSURLErrorNotConnectedToInternet,
+            NSURLErrorNetworkConnectionLost,
+            NSURLErrorDataNotAllowed,
+        ].contains(error.code)
+        let title = offline
+            ? loc("インターネットに接続されていません", "You're offline")
+            : loc("ページを開けませんでした", "This page didn't load")
+        let message = offline
+            ? loc("Wi-Fi またはモバイル通信を確認してから、もう一度お試しください。",
+                  "Check your Wi-Fi or mobile connection, then try again.")
+            : escapeHTML(error.localizedDescription)
+        let href = escapeHTML(url.absoluteString)
+
+        return """
+        <!DOCTYPE html><html><head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+          body { background:#0b0f14; color:#e8edf2; font-family:-apple-system,sans-serif;
+                 min-height:100vh; display:flex; flex-direction:column; align-items:center;
+                 justify-content:center; text-align:center; padding:32px 24px; }
+          .icon { font-size:42px; margin-bottom:16px; }
+          h1 { font-size:20px; font-weight:700; }
+          .msg { color:#9aa7b4; font-size:14px; line-height:1.55; margin-top:10px; max-width:420px; }
+          .host { color:#5c6773; font-size:12px; margin-top:16px; max-width:420px;
+                  word-break:break-all; }
+          .retry { margin-top:26px; display:inline-block; text-decoration:none;
+                   color:#0b0f14; background:#39d3f5; font-size:14px; font-weight:600;
+                   padding:11px 26px; border-radius:11px; }
+          .retry:active { background:#2bb9d8; }
+        </style></head><body>
+        <div class="icon">\(offline ? "📡" : "⚠️")</div>
+        <h1>\(title)</h1>
+        <p class="msg">\(message)</p>
+        <p class="host">\(href)</p>
+        <a class="retry" href="\(href)">\(loc("再試行", "Try again"))</a>
+        </body></html>
+        """
+    }
+
     // MARK: - Init
+
+    /// Every setting's factory value, in one place: launch reads them here and
+    /// so does "reset", so the two can't drift apart.
+    enum Default {
+        static let pcMode = false            // phone mode on a fresh install
+        static let cursorSensitivity = 1.4
+        static let scrollSpeed = 700.0
+        static let controlScheme = ControlScheme.classic
+        static let hapticsEnabled = true
+        static let forceZoom = true
+        static let showFPS = false
+        static let joystickUsesArrows = false
+        static let showScrollButtons = true
+        static let appLanguage = 0           // follow the system
+        static let appTheme = 0              // dark
+        static let toolbarOnBottom = false
+        static let searchEngine = SearchEngine.google
+        static let newTabPage = NewTabPage.home
+        static let autofillEnabled = true
+        static let adBlockEnabled = true
+        static let useFullAdList = false
+        static let trackingLevel = TrackerBlocker.Level.balanced
+        static let appLockEnabled = false
+        static let fraudWarning = true
+        static let httpsOnly = true
+        static let blockPopups = false
+        static let javaScriptEnabled = true
+        static let capturePolicy = CapturePolicy.ask
+        static let webNotificationsEnabled = true
+        static let highlightsEnabled = false
+        static let keepAliveInBackground = false
+    }
+
+    // MARK: - Resetting settings
+
+    /// One settings card's worth of options.
+    enum SettingsSection: CaseIterable {
+        case browserMode, controls, searchTabs, appearance, autofill
+        case security, permissions, highlights, background
+    }
+
+    /// Put one section back to its factory values, with feedback.
+    ///
+    /// Browsing data is deliberately left alone — bookmarks, history, saved
+    /// passwords and cards, open tabs and control profiles all survive. This
+    /// resets settings, not the user's own stuff.
+    func resetSettings(_ section: SettingsSection) {
+        applyDefaults(to: section)
+        hapticMedium()
+    }
+
+    func resetAllSettings() {
+        for section in SettingsSection.allCases { applyDefaults(to: section) }
+        hapticMedium()
+    }
+
+    private func applyDefaults(to section: SettingsSection) {
+        switch section {
+        case .browserMode:
+            pcMode = Default.pcMode
+            desktopMode = Default.pcMode
+        case .controls:
+            controlScheme = Default.controlScheme
+            cursorSensitivity = Default.cursorSensitivity
+            scrollSpeed = Default.scrollSpeed
+            hapticsEnabled = Default.hapticsEnabled
+            forceZoom = Default.forceZoom
+            showFPS = Default.showFPS
+            joystickUsesArrows = Default.joystickUsesArrows
+            resetJoystickPosition()
+        case .searchTabs:
+            searchEngine = Default.searchEngine
+            newTabPage = Default.newTabPage
+        case .appearance:
+            // Theme lives in @AppStorage; writing the same key updates it.
+            UserDefaults.standard.set(Default.appTheme, forKey: "appTheme")
+            appLanguage = Default.appLanguage
+            toolbarOnBottom = Default.toolbarOnBottom
+            showScrollButtons = Default.showScrollButtons
+            desktopMode = pcMode   // its factory value is "match the mode"
+        case .autofill:
+            autofillEnabled = Default.autofillEnabled
+        case .security:
+            adBlockEnabled = Default.adBlockEnabled
+            useFullAdList = Default.useFullAdList
+            trackingLevel = Default.trackingLevel
+            appLockEnabled = Default.appLockEnabled
+            fraudWarning = Default.fraudWarning
+            httpsOnly = Default.httpsOnly
+            blockPopups = Default.blockPopups
+            javaScriptEnabled = Default.javaScriptEnabled
+        case .permissions:
+            capturePolicy = Default.capturePolicy
+            webNotificationsEnabled = Default.webNotificationsEnabled
+        case .highlights:
+            highlightsEnabled = Default.highlightsEnabled
+        case .background:
+            keepAliveInBackground = Default.keepAliveInBackground
+        }
+    }
 
     override init() {
         let defaults = UserDefaults.standard
         let savedSensitivity = defaults.double(forKey: "cursorSensitivity")
-        cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : 1.4
-        pcMode = defaults.bool(forKey: "pcMode")   // phone mode by default
-        showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool ?? true
-        appLanguage = defaults.integer(forKey: "appLanguage")
-        toolbarOnBottom = defaults.bool(forKey: "toolbarOnBottom")
-        joystickUsesArrows = defaults.bool(forKey: "joystickUsesArrows")
-        hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool ?? true
-        controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme")) ?? .classic
-        httpsOnly = defaults.object(forKey: "httpsOnly") as? Bool ?? true
-        fraudWarning = defaults.object(forKey: "fraudWarning") as? Bool ?? true
-        blockPopups = defaults.object(forKey: "blockPopups") as? Bool ?? false
-        javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool ?? true
-        capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy")) ?? .ask
-        adBlockEnabled = defaults.object(forKey: "adBlockEnabled") as? Bool ?? true
+        cursorSensitivity = savedSensitivity > 0 ? savedSensitivity : Default.cursorSensitivity
+        pcMode = defaults.object(forKey: "pcMode") as? Bool ?? Default.pcMode
+        showScrollButtons = defaults.object(forKey: "showScrollButtons") as? Bool
+            ?? Default.showScrollButtons
+        appLanguage = defaults.object(forKey: "appLanguage") as? Int ?? Default.appLanguage
+        toolbarOnBottom = defaults.object(forKey: "toolbarOnBottom") as? Bool
+            ?? Default.toolbarOnBottom
+        joystickUsesArrows = defaults.object(forKey: "joystickUsesArrows") as? Bool
+            ?? Default.joystickUsesArrows
+        hapticsEnabled = defaults.object(forKey: "hapticsEnabled") as? Bool
+            ?? Default.hapticsEnabled
+        controlScheme = ControlScheme(rawValue: defaults.integer(forKey: "controlScheme"))
+            ?? Default.controlScheme
+        httpsOnly = defaults.object(forKey: "httpsOnly") as? Bool ?? Default.httpsOnly
+        fraudWarning = defaults.object(forKey: "fraudWarning") as? Bool ?? Default.fraudWarning
+        blockPopups = defaults.object(forKey: "blockPopups") as? Bool ?? Default.blockPopups
+        javaScriptEnabled = defaults.object(forKey: "javaScriptEnabled") as? Bool
+            ?? Default.javaScriptEnabled
+        capturePolicy = CapturePolicy(rawValue: defaults.integer(forKey: "capturePolicy"))
+            ?? Default.capturePolicy
+        adBlockEnabled = defaults.object(forKey: "adBlockEnabled") as? Bool
+            ?? Default.adBlockEnabled
         if let saved = defaults.object(forKey: "trackingLevel") as? Int {
-            trackingLevel = TrackerBlocker.Level(rawValue: saved) ?? .balanced
+            trackingLevel = TrackerBlocker.Level(rawValue: saved) ?? Default.trackingLevel
         } else {
-            trackingLevel = .balanced   // on by default
+            trackingLevel = Default.trackingLevel   // on by default
         }
-        searchEngine = SearchEngine(rawValue: defaults.integer(forKey: "searchEngine")) ?? .google
-        newTabPage = NewTabPage(rawValue: defaults.integer(forKey: "newTabPage")) ?? .home
-        appLockEnabled = defaults.bool(forKey: "appLockEnabled")
-        autofillEnabled = defaults.object(forKey: "autofillEnabled") as? Bool ?? true
-        useFullAdList = defaults.bool(forKey: "useFullAdList")
-        webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool ?? true
-        keepAliveInBackground = defaults.bool(forKey: "keepAliveInBackground")
-        highlightsEnabled = defaults.bool(forKey: "highlightsEnabled")
+        searchEngine = SearchEngine(rawValue: defaults.integer(forKey: "searchEngine"))
+            ?? Default.searchEngine
+        newTabPage = NewTabPage(rawValue: defaults.integer(forKey: "newTabPage"))
+            ?? Default.newTabPage
+        appLockEnabled = defaults.object(forKey: "appLockEnabled") as? Bool
+            ?? Default.appLockEnabled
+        autofillEnabled = defaults.object(forKey: "autofillEnabled") as? Bool
+            ?? Default.autofillEnabled
+        useFullAdList = defaults.object(forKey: "useFullAdList") as? Bool ?? Default.useFullAdList
+        webNotificationsEnabled = defaults.object(forKey: "webNotificationsEnabled") as? Bool
+            ?? Default.webNotificationsEnabled
+        keepAliveInBackground = defaults.object(forKey: "keepAliveInBackground") as? Bool
+            ?? Default.keepAliveInBackground
+        highlightsEnabled = defaults.object(forKey: "highlightsEnabled") as? Bool
+            ?? Default.highlightsEnabled
         desktopMode = defaults.object(forKey: "desktopMode") as? Bool
-            ?? defaults.bool(forKey: "pcMode")
+            ?? (defaults.object(forKey: "pcMode") as? Bool ?? Default.pcMode)
+        forceZoom = defaults.object(forKey: "forceZoom") as? Bool ?? Default.forceZoom
+        showFPS = defaults.object(forKey: "showFPS") as? Bool ?? Default.showFPS
+        profiles = ControlProfileStore.loadProfiles()
+        activeProfileID = ControlProfileStore.loadActive()
+        padVisible = defaults.bool(forKey: "padVisible")
         if let data = defaults.data(forKey: "history"),
            let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
             history = saved
@@ -820,6 +1648,22 @@ final class BrowserViewModel: NSObject, ObservableObject {
         super.init()
 
         gamepad = GamepadController(viewModel: self)
+        // A finished download is otherwise completely silent.
+        downloads.$lastFinished
+            .compactMap { $0 }
+            .sink { [weak self] name in
+                Task { @MainActor in
+                    self?.toast(loc("保存しました: ", "Saved: ") + name,
+                                icon: "checkmark.circle.fill")
+                }
+            }
+            .store(in: &cancellables)
+        downloads.$activeCount
+            .removeDuplicates()
+            .sink { [weak self] count in
+                Task { @MainActor in self?.activeDownloads = count }
+            }
+            .store(in: &cancellables)
         UNUserNotificationCenter.current().delegate = self
         credentials = AutofillStore.loadCredentials()
         paymentCard = AutofillStore.loadCard()
@@ -839,7 +1683,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.saveTabs() }
+            Task { @MainActor in
+                self?.saveTabs()
+                self?.saveProfilesNow()
+            }
         }
     }
 
@@ -858,7 +1705,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     /// Persist thumbnails so the tab switcher isn't blank after a relaunch.
     private func saveSnapshots() {
-        let images = tabs.map(\.snapshot)
+        // Indexed to match saveTabs()'s records, which exclude private tabs —
+        // a private tab's thumbnail is a picture of a page that is not
+        // supposed to exist after the session.
+        let images = tabs.filter { !$0.isPrivate }.map(\.snapshot)
         let dir = Self.snapshotsDir
         Task.detached(priority: .utility) {
             for (i, image) in images.enumerated() {
@@ -876,6 +1726,19 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Tab thumbnails are pictures of the pages you visited, so clearing
+    /// history has to take them with it — they used to outlive it on disk,
+    /// and stayed visible in the tab switcher afterwards.
+    private func clearTabSnapshots() {
+        for tab in tabs { tab.snapshot = nil }
+        let dir = Self.snapshotsDir
+        Task.detached(priority: .utility) {
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: nil)) ?? []
+            for file in files { try? FileManager.default.removeItem(at: file) }
+        }
+    }
+
     /// Per-tab persisted state (URL, scroll position, ...).
     private struct TabRecord: Codable {
         var url: String
@@ -884,7 +1747,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     private func saveTabs() {
-        let records = tabs.map { tab -> TabRecord in
+        // Private tabs are left out entirely: they must not reappear after a
+        // relaunch, and neither their URLs nor their thumbnails belong on disk.
+        let persisted = tabs.enumerated().filter { !$0.element.isPrivate }
+        let records = persisted.map { entry -> TabRecord in
+            let tab = entry.element
             let url = tab.webView.url
             // loadHTMLString reports about:blank — persist the start-page marker.
             let urlString: String
@@ -893,14 +1760,20 @@ final class BrowserViewModel: NSObject, ObservableObject {
             } else {
                 urlString = url!.absoluteString
             }
-            let offset = tab.webView.scrollView.contentOffset
+            // A restored tab that hasn't been opened yet has an empty web
+            // view, so keep the scroll position it was saved with instead of
+            // overwriting it with that empty view's (0, 0).
+            let offset = tab.pendingScroll ?? tab.webView.scrollView.contentOffset
             return TabRecord(url: urlString, scrollX: offset.x, scrollY: max(offset.y, 0))
         }
         let defaults = UserDefaults.standard
         if let data = try? JSONEncoder().encode(records) {
             defaults.set(data, forKey: "savedTabRecords")
         }
-        defaults.set(activeTabIndex, forKey: "savedActiveTabIndex")
+        // Expressed within the persisted subset, since private tabs shift
+        // every index after them.
+        let activeAmongPersisted = persisted.firstIndex { $0.offset == activeTabIndex } ?? 0
+        defaults.set(activeAmongPersisted, forKey: "savedActiveTabIndex")
         saveSnapshots()
     }
 
@@ -922,14 +1795,15 @@ final class BrowserViewModel: NSObject, ObservableObject {
             let url = URL(string: record.url)!
             let tab = Tab(webView: makeWebView())
             tab.pendingURL = url
+            // Deferred: selectTab() loads a tab the first time it is shown.
+            // Loading every restored tab up front meant a relaunch with a
+            // dozen tabs fired a dozen page loads at once — slow to launch,
+            // and all of it competing for memory and bandwidth with the one
+            // tab the user is actually looking at.
+            tab.pendingLoad = url
             tab.pendingScroll = CGPoint(x: record.scrollX, y: record.scrollY)
             tab.snapshot = UIImage(contentsOfFile: snapshotFile(i).path)
             tabs.append(tab)
-            if record.url == Self.startPageMarker {
-                loadStartPage(in: tab.webView)
-            } else {
-                tab.webView.load(URLRequest(url: url))
-            }
         }
         let saved = defaults.integer(forKey: "savedActiveTabIndex")
         selectTab(min(max(saved, 0), tabs.count - 1))
@@ -940,18 +1814,42 @@ final class BrowserViewModel: NSObject, ObservableObject {
     final class Tab: Identifiable, ObservableObject {
         let id = UUID()
         let webView: WKWebView
+        /// Private tabs use an ephemeral data store, record no history, and
+        /// are never written to disk — neither the URL nor the thumbnail.
+        let isPrivate: Bool
         @Published var snapshot: UIImage?
         /// Last requested URL; used for persistence while the page is still loading.
         var pendingURL: URL?
+        /// Set while this tab still owes itself a load — a restored tab that
+        /// hasn't been opened yet, or a brand new one. Popup tabs never set
+        /// it: WebKit performs those loads itself.
+        var pendingLoad: URL?
         /// Scroll position to restore once the page finishes loading.
         var pendingScroll: CGPoint?
-        init(webView: WKWebView) { self.webView = webView }
+        init(webView: WKWebView, isPrivate: Bool = false) {
+            self.webView = webView
+            self.isPrivate = isPrivate
+        }
 
         @MainActor var title: String {
             let t = webView.title ?? ""
-            return t.isEmpty ? (webView.url?.host ?? loc("新しいタブ", "New Tab")) : t
+            if !t.isEmpty { return t }
+            if let host = webView.url?.host { return host }
+            // A restored tab that hasn't been opened yet has no web view URL
+            // to fall back on — only the one it is going to load.
+            if let pending = pendingURL,
+               pending.absoluteString != BrowserViewModel.startPageMarker,
+               let host = pending.host {
+                return host
+            }
+            return loc("新しいタブ", "New Tab")
         }
-        @MainActor var urlString: String { webView.url?.absoluteString ?? "" }
+        @MainActor var urlString: String {
+            if let url = webView.url { return url.absoluteString }
+            guard let pending = pendingURL,
+                  pending.absoluteString != BrowserViewModel.startPageMarker else { return "" }
+            return pending.absoluteString
+        }
     }
 
     @Published var tabs: [Tab] = []
@@ -959,14 +1857,67 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     var webView: WKWebView { tabs[activeTabIndex].webView }
 
-    private func makeWebView() -> WKWebView {
+    /// One shared ephemeral store, so private tabs share a session with each
+    /// other but nothing with normal browsing. It is replaced once the last
+    /// private tab closes — that, not closing a single tab, is what ends the
+    /// private session.
+    private var privateDataStore = WKWebsiteDataStore.nonPersistent()
+
+    private func endPrivateSessionIfEmpty() {
+        guard !tabs.contains(where: { $0.isPrivate }) else { return }
+        privateDataStore = WKWebsiteDataStore.nonPersistent()
+    }
+
+    // MARK: - Appearance
+
+    /// The interface style the page itself should render against.
+    ///
+    /// This used to be left to the window, and the first page of a cold start
+    /// came out light however the app and the device were set.
+    ///
+    /// `restoreTabs()` runs from this class's initialiser and `selectTab()`
+    /// starts the load immediately, so that first navigation happens while the
+    /// web view has no superview and no window. A detached view has no trait
+    /// environment to resolve against — it does not fall back to the device's
+    /// setting, it falls back to light — so the page was told
+    /// `prefers-color-scheme: light` even on a phone in dark mode. Every later
+    /// navigation runs against the real window and comes out right, which is
+    /// why switching to PC mode (which re-navigates every tab) looked like the
+    /// thing that fixed it.
+    ///
+    /// An explicit override on the web view resolves without a trait
+    /// environment at all, so it holds while detached.
+    var webInterfaceStyle: UIUserInterfaceStyle {
+        switch UserDefaults.standard.object(forKey: "appTheme") as? Int ?? Default.appTheme {
+        case 1: return .light
+        case 2: return .unspecified   // follow the device
+        default: return .dark
+        }
+    }
+
+    /// Re-apply: after the setting changes, and once the view is actually on
+    /// screen. The media query re-evaluates on a trait change by itself, so
+    /// nothing needs reloading — a page that did somehow start out light
+    /// flips when this lands.
+    func applyInterfaceStyle() {
+        let style = webInterfaceStyle
+        for tab in tabs { tab.webView.overrideUserInterfaceStyle = style }
+    }
+
+    private func makeWebView(isPrivate: Bool = false) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // Cookies, storage and caches live only in memory for a private tab
+        // and go away with the session.
+        config.websiteDataStore = isPrivate ? privateDataStore : .default()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         config.preferences.isFraudulentWebsiteWarningEnabled = fraudWarning
         config.upgradeKnownHostsToHTTPS = httpsOnly
-        config.defaultWebpagePreferences.preferredContentMode = .desktop
+        // The first navigation in a new tab uses this, before the delegate
+        // below gets a say — hardcoding .desktop meant a new tab in phone mode
+        // laid its first page out as desktop and then switched on the next one.
+        config.defaultWebpagePreferences.preferredContentMode = desktopMode ? .desktop : .mobile
 
         let userScript = WKUserScript(
             source: InputBridge.script,
@@ -977,6 +1928,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         config.userContentController.add(ScriptMessageProxy(self), name: "gbEvents")
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.overrideUserInterfaceStyle = webInterfaceStyle
         webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
         webView.allowsBackForwardNavigationGestures = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -988,18 +1940,34 @@ final class BrowserViewModel: NSObject, ObservableObject {
         return webView
     }
 
-    func newTab(url: URL? = nil) {
-        let tab = Tab(webView: makeWebView())
-        let useStartPage = url == nil && newTabPage == .startPage
+    func newTab(url: URL? = nil, isPrivate: Bool = false) {
+        let tab = Tab(webView: makeWebView(isPrivate: isPrivate), isPrivate: isPrivate)
+        let useStartPage = url == nil && newTabPage == .startPage && !isPrivate
         tab.pendingURL = useStartPage ? URL(string: Self.startPageMarker) : (url ?? Self.homeURL)
+        tab.pendingLoad = tab.pendingURL
         tabs.append(tab)
-        selectTab(tabs.count - 1)
-        if useStartPage {
+        selectTab(tabs.count - 1)   // performs the load
+        saveTabs()
+        if isPrivate { hapticMedium() }
+    }
+
+    /// True when the tab on screen is private — drives the violet accent and
+    /// everything that must not be recorded.
+    var isPrivateTab: Bool {
+        tabs.indices.contains(activeTabIndex) && tabs[activeTabIndex].isPrivate
+    }
+
+    var privateTabCount: Int { tabs.filter(\.isPrivate).count }
+
+    /// Load a tab that hasn't been loaded yet, the first time it is shown.
+    private func loadPendingIfNeeded(_ tab: Tab) {
+        guard let url = tab.pendingLoad else { return }
+        tab.pendingLoad = nil
+        if url.absoluteString == Self.startPageMarker {
             loadStartPage(in: tab.webView)
         } else {
-            tab.webView.load(URLRequest(url: url ?? Self.homeURL))
+            tab.webView.load(URLRequest(url: url))
         }
-        saveTabs()
     }
 
     func selectTab(_ index: Int) {
@@ -1008,6 +1976,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         releaseAllKeys()
         if dragLocked { mouseUp() }   // don't leave a mouse button held in the old tab
         activeTabIndex = index
+        loadPendingIfNeeded(tabs[index])
         bindObservers(to: tabs[index].webView)
         pointerLocked = false
         pageHidesCursor = false
@@ -1048,6 +2017,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let tab = tabs.remove(at: index)
         tab.webView.stopLoading()
         tab.webView.setAllMediaPlaybackSuspended(true)
+
+        endPrivateSessionIfEmpty()
 
         if tabs.isEmpty {
             newTab()
@@ -1098,6 +2069,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
                     self?.pageHidesCursor = false   // reset on navigation
                     self?.cursorStyle = "auto"
                     self?.dismissAutofill()
+                    self?.applySiteProfile(for: wv.url)
                 }
             },
             webView.observe(\.title) { [weak self] wv, _ in
@@ -1205,8 +2177,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
         // Gentle pointer acceleration: slow finger = precision, fast = distance.
         let speed = hypot(delta.width, delta.height)
         let accel = min(2.2, 0.7 + speed / 9)
-        let dx = delta.width * cursorSensitivity * accel
-        let dy = delta.height * cursorSensitivity * accel
+        let sensitivity = effectiveSensitivity
+        let dx = delta.width * sensitivity * accel
+        let dy = delta.height * sensitivity * accel
         cursorPosition = clamp(CGPoint(x: cursorPosition.x + dx, y: cursorPosition.y + dy))
         js("window.__gb && __gb.move(\(f(cursorPosition.x)), \(f(cursorPosition.y)), \(f(dx)), \(f(dy)))")
         wakeCursor()
@@ -1255,30 +2228,90 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     private var scrollTimer: Timer?
     private var scrollDirection: CGFloat = 0
+    private var scrollHeldSince: Date?
+    private var scrollReleasedAt: Date?
+    private var scrollLastTick: Date?
+    /// Current speed as a multiple of `scrollSpeed`, carried across a release
+    /// so the glide starts from whatever the hold had reached.
+    private var scrollMultiplier: Double = 0
+
+    /// Hold-to-scroll shape. A page can be twenty screens long, so a single
+    /// speed is always wrong: slow enough to place yourself precisely is far
+    /// too slow to get anywhere, and fast enough to travel overshoots every
+    /// time. Holding ramps from one to the other, and releasing glides to a
+    /// stop rather than stopping dead, which is how a flick already behaves.
+    private enum ScrollRamp {
+        static let start = 0.4          // × scrollSpeed at the moment of press
+        static let peak = 1.6           // ... after `ramp` seconds held
+        static let ramp: Double = 1.2
+        static let glide: Double = 0.35
+        /// A stalled main thread must not teleport the page on the next tick.
+        static let maxStep: Double = 1.0 / 20
+    }
 
     /// Smooth-scroll speed in px/s while a scroll button is held (user setting).
     @Published var scrollSpeed: Double = {
         let saved = UserDefaults.standard.double(forKey: "scrollSpeed")
-        return saved > 0 ? saved : 700
+        return saved > 0 ? saved : Default.scrollSpeed
     }() {
         didSet { UserDefaults.standard.set(scrollSpeed, forKey: "scrollSpeed") }
     }
 
-    /// Scroll smoothly at constant speed in `direction` (+1 down / -1 up).
+    /// Start (or resume) a held scroll in `direction` (+1 down / -1 up).
     func startSmoothScroll(direction: CGFloat) {
+        let now = Date()
+        // Pressing again mid-glide picks the ramp back up where the speed
+        // currently is, so repeated taps read as one continuous scroll rather
+        // than restarting from a crawl each time.
+        let resumed = ((scrollMultiplier - ScrollRamp.start)
+                       / (ScrollRamp.peak - ScrollRamp.start)) * ScrollRamp.ramp
+        scrollHeldSince = now.addingTimeInterval(-min(max(resumed, 0), ScrollRamp.ramp))
+        scrollReleasedAt = nil
         scrollDirection = direction
         guard scrollTimer == nil else { return }
-        scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.scroll(dx: 0, dy: self.scrollDirection * self.scrollSpeed / 60)
-            }
+        scrollLastTick = now
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.smoothScrollTick() }
         }
+        // .common, so the page keeps moving while a finger is down: in
+        // .default the run loop enters tracking mode and the timer stops
+        // firing, which is exactly the whole time a scroll button is held.
+        RunLoop.main.add(timer, forMode: .common)
+        scrollTimer = timer
     }
 
+    private func smoothScrollTick() {
+        let now = Date()
+        let step = min(now.timeIntervalSince(scrollLastTick ?? now), ScrollRamp.maxStep)
+        scrollLastTick = now
+
+        if let released = scrollReleasedAt {
+            let progress = now.timeIntervalSince(released) / ScrollRamp.glide
+            guard progress < 1 else { return stopSmoothScroll() }
+            // Ease out, so the last few frames barely move.
+            scrollMultiplier *= (1 - progress) * (1 - progress)
+        } else {
+            let held = now.timeIntervalSince(scrollHeldSince ?? now)
+            let progress = min(held / ScrollRamp.ramp, 1)
+            scrollMultiplier = ScrollRamp.start
+                + (ScrollRamp.peak - ScrollRamp.start) * progress
+        }
+        scroll(dx: 0, dy: scrollDirection * scrollSpeed * scrollMultiplier * step)
+    }
+
+    /// Let go: coast to a stop instead of stopping mid-motion.
     func endSmoothScroll() {
+        guard scrollTimer != nil, scrollReleasedAt == nil else { return }
+        scrollReleasedAt = Date()
+    }
+
+    private func stopSmoothScroll() {
         scrollTimer?.invalidate()
         scrollTimer = nil
+        scrollReleasedAt = nil
+        scrollHeldSince = nil
+        scrollLastTick = nil
+        scrollMultiplier = 0
     }
 
     func toggleDragLock() {
@@ -1302,6 +2335,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
     func releaseAllKeys() {
         for key in pressedKeys { sendKey(type: "keyup", key) }
         pressedKeys.removeAll()
+        // Latched pad buttons were holding some of those — and possibly a
+        // mouse button, which the loop above doesn't cover.
+        releasePadButtons()
     }
 
     func tapKey(_ key: InputBridge.Key) {
@@ -1452,6 +2488,14 @@ final class BrowserViewModel: NSObject, ObservableObject {
             if cursorStyle != style { cursorStyle = style }
             let hidden = style == "none"
             if pageHidesCursor != hidden { pageHidesCursor = hidden }
+        } else if type == "link" {
+            if let href = dict["href"] as? String, let url = URL(string: href),
+               url.scheme == "http" || url.scheme == "https" {
+                linkTarget = LinkTarget(url: url, text: (dict["text"] as? String) ?? href)
+                hapticMedium()
+            }
+        } else if type == "fps" {
+            if let value = dict["value"] as? Int, showFPS { fps = value }
         } else if type == "notification" {
             postWebNotification(
                 title: dict["title"] as? String ?? "",
@@ -1511,7 +2555,7 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
         webView.uiDelegate = self
         attachAdBlock(to: webView)
 
-        let tab = Tab(webView: webView)
+        let tab = Tab(webView: webView, isPrivate: isPrivateTab)
         // WebKit performs the popup's load itself (not via our load(_:)), so
         // without this, saveTabs() — called synchronously right below, before
         // the popup's own .url KVO or navigation delegate callbacks fire —
@@ -1543,6 +2587,13 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
             }
             preferences.preferredContentMode = self.desktopMode ? .desktop : .mobile
             preferences.allowsContentJavaScript = self.javaScriptEnabled
+
+            // A link with a `download` attribute: save it instead of trying
+            // to navigate to it, which used to leave a blank tab behind.
+            if navigationAction.shouldPerformDownload {
+                decisionHandler(.download, preferences)
+                return
+            }
 
             // HTTPS-first: rewrite plain-http main-frame navigations.
             if self.httpsOnly,
@@ -1586,6 +2637,17 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.applyKeyboardSuppression()
+            self.applyViewportMode(in: webView)
+            self.applyFPSMeter()
+            // Only the tab on screen: a background tab finishing its load
+            // says nothing about what the user is looking at.
+            if !self.tabs.isEmpty, webView === self.webView {
+                // A fresh document has none of the focus styling we applied.
+                self.gameFocused = false
+                // "Open the game and play": a profile can ask for the game to
+                // be blown up as soon as its page is ready.
+                if self.activeProfile?.autoFocusGame == true { self.toggleGameFocus() }
+            }
 
             // Restore the saved scroll position after a relaunch.
             if let tab = self.tabs.first(where: { $0.webView === webView }),
@@ -1606,7 +2668,62 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
             }
 
             guard let url = webView.url else { return }
-            self.recordHistory(url: url, title: webView.title ?? "")
+            // A private tab leaves no trace in history.
+            let fromPrivateTab = self.tabs.first { $0.webView === webView }?.isPrivate ?? false
+            if !fromPrivateTab {
+                self.recordHistory(url: url, title: webView.title ?? "")
+            }
+        }
+    }
+
+    /// Anything WebKit can't display — a zip, an installer, a save file — is
+    /// a download rather than a dead end. This is what made "tap the download
+    /// link and nothing happens" the app's behaviour until now.
+    nonisolated func webView(_ webView: WKWebView,
+                             decidePolicyFor navigationResponse: WKNavigationResponse,
+                             decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
+    }
+
+    nonisolated func webView(_ webView: WKWebView,
+                             navigationAction: WKNavigationAction,
+                             didBecome download: WKDownload) {
+        MainActor.assumeIsolated {
+            download.delegate = downloads
+            downloads.begin(download, suggested: nil, source: navigationAction.request.url)
+            toast(loc("ダウンロードを開始しました", "Download started"),
+                  icon: "arrow.down.circle.fill")
+        }
+    }
+
+    nonisolated func webView(_ webView: WKWebView,
+                             navigationResponse: WKNavigationResponse,
+                             didBecome download: WKDownload) {
+        MainActor.assumeIsolated {
+            download.delegate = downloads
+            downloads.begin(download,
+                            suggested: navigationResponse.response.suggestedFilename,
+                            source: navigationResponse.response.url)
+            toast(loc("ダウンロードを開始しました", "Download started"),
+                  icon: "arrow.down.circle.fill")
+        }
+    }
+
+    /// The request never got off the ground (DNS, offline, TLS, timeout).
+    nonisolated func webView(_ webView: WKWebView,
+                             didFailProvisionalNavigation navigation: WKNavigation!,
+                             withError error: Error) {
+        Task { @MainActor [weak self] in
+            self?.showErrorPage(for: error, in: webView)
+        }
+    }
+
+    /// The load started and then died part-way through.
+    nonisolated func webView(_ webView: WKWebView,
+                             didFail navigation: WKNavigation!,
+                             withError error: Error) {
+        Task { @MainActor [weak self] in
+            self?.showErrorPage(for: error, in: webView)
         }
     }
 }

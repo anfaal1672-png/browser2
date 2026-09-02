@@ -67,5 +67,11 @@
 	</dict>
 	<key>UIRequiresFullScreen</key>
 	<false/>
+	<!-- Downloads land in Documents/Downloads; these two expose that folder
+	     in the Files app, so a saved file is reachable from outside the app. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>

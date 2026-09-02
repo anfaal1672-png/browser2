@@ -41,6 +41,13 @@ final class TrackpadUIView: UIView {
     private let longPressDelay: TimeInterval = 0.45
     private let scrollSpeed: CGFloat = 2.2
 
+    /// A two-finger gesture is classified once and then kept: a pinch that
+    /// keeps flipping into a scroll halfway through is unusable.
+    private enum TwoFingerMode { case undecided, scroll, zoom }
+    private var twoFingerMode: TwoFingerMode = .undecided
+    private var startDistance: CGFloat = 0
+    private var startMidpoint: CGPoint = .zero
+
     // Quick scheme state
     private var lastTapEndTime: Date = .distantPast
     private var lastTapEndPoint: CGPoint = .zero
@@ -81,6 +88,13 @@ final class TrackpadUIView: UIView {
             cancelLongPress()
             isTwoFingerGesture = true
             twoFingerMoved = false
+            twoFingerMode = .undecided
+            if lastPoints.count >= 2 {
+                startDistance = hypot(lastPoints[0].x - lastPoints[1].x,
+                                      lastPoints[0].y - lastPoints[1].y)
+                startMidpoint = CGPoint(x: (lastPoints[0].x + lastPoints[1].x) / 2,
+                                        y: (lastPoints[0].y + lastPoints[1].y) / 2)
+            }
         }
     }
 
@@ -91,7 +105,23 @@ final class TrackpadUIView: UIView {
         guard points.count == lastPoints.count, !points.isEmpty else { return }
 
         if activeTouches.count >= 2 {
-            // Two-finger scroll: average delta of both fingers.
+            let spread = hypot(points[0].x - points[1].x, points[0].y - points[1].y)
+            let lastSpread = hypot(lastPoints[0].x - lastPoints[1].x,
+                                   lastPoints[0].y - lastPoints[1].y)
+            let mid = CGPoint(x: (points[0].x + points[1].x) / 2,
+                              y: (points[0].y + points[1].y) / 2)
+
+            if twoFingerMode == .undecided {
+                let pinched = abs(spread - startDistance)
+                let travelled = hypot(mid.x - startMidpoint.x, mid.y - startMidpoint.y)
+                if pinched > 20 {
+                    twoFingerMode = .zoom
+                } else if travelled > 10 {
+                    twoFingerMode = .scroll
+                }
+            }
+
+            // Average delta of both fingers.
             var dx: CGFloat = 0, dy: CGFloat = 0
             for i in 0..<points.count {
                 dx += points[i].x - lastPoints[i].x
@@ -99,8 +129,18 @@ final class TrackpadUIView: UIView {
             }
             dx /= CGFloat(points.count)
             dy /= CGFloat(points.count)
-            if abs(dx) + abs(dy) > 0.5 { twoFingerMoved = true }
-            viewModel.scroll(dx: -dx * scrollSpeed, dy: -dy * scrollSpeed)
+            if abs(dx) + abs(dy) > 0.5 || abs(spread - lastSpread) > 0.5 { twoFingerMoved = true }
+
+            switch twoFingerMode {
+            case .zoom:
+                // Pinch: the web view never sees these touches, so zooming is
+                // driven from here.
+                if lastSpread > 1 { viewModel.pinchZoom(by: spread / lastSpread, at: mid) }
+            case .scroll:
+                viewModel.scroll(dx: -dx * scrollSpeed, dy: -dy * scrollSpeed)
+            case .undecided:
+                break
+            }
         } else {
             let dx = points[0].x - lastPoints[0].x
             let dy = points[0].y - lastPoints[0].y
@@ -141,6 +181,7 @@ final class TrackpadUIView: UIView {
             if wasTwoFingerGesture {
                 isTwoFingerGesture = false
                 twoFingerMoved = false
+                twoFingerMode = .undecided
                 touchStartTime = .distantPast
                 totalMovement = 0
             }
@@ -153,6 +194,7 @@ final class TrackpadUIView: UIView {
         } else if isTwoFingerGesture {
             if !twoFingerMoved { viewModel.click(button: 2) }   // two-finger tap → right click
             isTwoFingerGesture = false
+            twoFingerMode = .undecided
         } else if Date().timeIntervalSince(touchStartTime) < tapMaxDuration,
                   totalMovement <= tapMaxMovement {
             if viewModel.dragLocked {

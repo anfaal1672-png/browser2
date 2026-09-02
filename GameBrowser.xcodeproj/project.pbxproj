@@ -24,6 +24,12 @@
 		AA00000120000010000000AA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000010000000AA /* SettingsView.swift */; };
 		AA00000120000011000000AA /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000011000000AA /* Localization.swift */; };
 		AA00000120000012000000AA /* HighlightRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000012000000AA /* HighlightRecorder.swift */; };
+		AA00000120000013000000AA /* ControlProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000013000000AA /* ControlProfile.swift */; };
+		AA00000120000014000000AA /* ControlPadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000014000000AA /* ControlPadView.swift */; };
+		AA00000120000015000000AA /* ControlProfilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000015000000AA /* ControlProfilesView.swift */; };
+		AA00000120000016000000AA /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000016000000AA /* DownloadManager.swift */; };
+		AA00000120000017000000AA /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000017000000AA /* DownloadsView.swift */; };
+		AA00000120000018000000AA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000110000018000000AA /* Theme.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +52,12 @@
 		AA00000110000010000000AA /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		AA00000110000011000000AA /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
 		AA00000110000012000000AA /* HighlightRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighlightRecorder.swift; sourceTree = "<group>"; };
+		AA00000110000013000000AA /* ControlProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlProfile.swift; sourceTree = "<group>"; };
+		AA00000110000014000000AA /* ControlPadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlPadView.swift; sourceTree = "<group>"; };
+		AA00000110000015000000AA /* ControlProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlProfilesView.swift; sourceTree = "<group>"; };
+		AA00000110000016000000AA /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
+		AA00000110000017000000AA /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
+		AA00000110000018000000AA /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,6 +108,12 @@
 				AA00000110000010000000AA /* SettingsView.swift */,
 				AA00000110000011000000AA /* Localization.swift */,
 				AA00000110000012000000AA /* HighlightRecorder.swift */,
+				AA00000110000013000000AA /* ControlProfile.swift */,
+				AA00000110000014000000AA /* ControlPadView.swift */,
+				AA00000110000015000000AA /* ControlProfilesView.swift */,
+				AA00000110000016000000AA /* DownloadManager.swift */,
+				AA00000110000017000000AA /* DownloadsView.swift */,
+				AA00000110000018000000AA /* Theme.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -194,6 +212,12 @@
 				AA00000120000011000000AA /* Localization.swift in Sources */,
 				AA00000120000012000000AA /* HighlightRecorder.swift in Sources */,
 				AA0000012000000B000000AA /* JoystickView.swift in Sources */,
+				AA00000120000013000000AA /* ControlProfile.swift in Sources */,
+				AA00000120000014000000AA /* ControlPadView.swift in Sources */,
+				AA00000120000015000000AA /* ControlProfilesView.swift in Sources */,
+				AA00000120000016000000AA /* DownloadManager.swift in Sources */,
+				AA00000120000017000000AA /* DownloadsView.swift in Sources */,
+				AA00000120000018000000AA /* Theme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

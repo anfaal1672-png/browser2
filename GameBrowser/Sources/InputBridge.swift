@@ -21,6 +21,12 @@ enum InputBridge {
             suppressKeyboard: false,   // cursor mode: don't pop the OS keyboard on focus
             compLen: 0,   // length of the in-field IME composition being edited
             compTarget: null,   // element compLen applies to
+            styleTarget: null,   // element the cursor style was last sampled from
+            styleAt: 0,          // when that sample was taken (ms)
+            focused: null,       // element blown up to fill the screen, if any
+            viewportPatched: false,   // we rewrote the page's viewport meta
+            fpsWanted: false,    // FPS meter requested
+            fpsRunning: false,   // its rAF loop is live
         };
 
         // Native code sends coordinates in view points; desktop-mode pages are
@@ -59,6 +65,11 @@ enum InputBridge {
             const r = frameEl.getBoundingClientRect();
             const fx = x - (r.left + (frameEl.clientLeft || 0));
             const fy = y - (r.top + (frameEl.clientTop || 0));
+            // While the pointer is inside the frame, the frame reports the
+            // cursor style; force this frame to re-sample immediately on the
+            // first move after the pointer comes back out, rather than
+            // waiting out its throttle interval with a stale native state.
+            state.styleAt = 0;
             try {
                 frameEl.contentWindow.postMessage(
                     { __gbCall: fn, args: [fx, fy].concat(rest || []) }, '*');
@@ -91,8 +102,9 @@ enum InputBridge {
             } catch (e) { /* PointerEvent unsupported */ }
         }
 
+        // Returns false when the page called preventDefault().
         function fireMouse(type, target, x, y, button, extra) {
-            target.dispatchEvent(new MouseEvent(type, common(x, y, Object.assign({
+            return target.dispatchEvent(new MouseEvent(type, common(x, y, Object.assign({
                 button: button,
                 detail: (type === 'dblclick') ? 2 : 1,
             }, extra))));
@@ -313,15 +325,25 @@ enum InputBridge {
 
                 // Games that draw their own cursor set `cursor: none` — tell
                 // native code so the overlay arrow disappears over them.
-                // Posted on every move (native side dedupes): per-frame
-                // change-detection swallowed transitions when the cursor
-                // crossed an iframe boundary, trapping it visually inside.
-                try {
-                    window.webkit.messageHandlers.gbEvents.postMessage({
-                        type: 'cursorstyle',
-                        style: getComputedStyle(target).cursor || 'auto',
-                    });
-                } catch (e) {}
+                // getComputedStyle forces a style recalc and this is the
+                // hottest path in the app (a move per touch sample, up to
+                // 120/s), so sample it when the hovered element changes and
+                // at most every 100ms otherwise. The value itself is still
+                // posted every time it's sampled — deduping it per frame is
+                // what previously trapped the cursor state inside an iframe,
+                // since each frame only ever sees its own transitions.
+                const now = (window.performance && performance.now)
+                    ? performance.now() : Date.now();
+                if (target !== state.styleTarget || now - state.styleAt > 100) {
+                    state.styleTarget = target;
+                    state.styleAt = now;
+                    try {
+                        window.webkit.messageHandlers.gbEvents.postMessage({
+                            type: 'cursorstyle',
+                            style: getComputedStyle(target).cursor || 'auto',
+                        });
+                    } catch (e) {}
+                }
             },
 
             down: function (x, y, button) {
@@ -406,7 +428,24 @@ enum InputBridge {
                     fireMouse('click', target, x, y, 0);
                     if (clickCount === 2) { fireMouse('dblclick', target, x, y, 0); }
                 } else if (button === 2) {
-                    fireMouse('contextmenu', target, x, y, 2);
+                    const notCancelled = fireMouse('contextmenu', target, x, y, 2);
+                    // WebKit's own long-press menu never appears in cursor
+                    // mode (the overlay takes the touches), so hand the link
+                    // to native for a real menu — but only when the page
+                    // didn't claim the right-click for itself, which is what
+                    // games do.
+                    if (notCancelled && target && target.closest) {
+                        const anchor = target.closest('a[href]');
+                        if (anchor && anchor.href) {
+                            try {
+                                window.webkit.messageHandlers.gbEvents.postMessage({
+                                    type: 'link',
+                                    href: anchor.href,
+                                    text: (anchor.textContent || '').trim().slice(0, 120),
+                                });
+                            } catch (e) {}
+                        }
+                    }
                 }
             },
 
@@ -467,7 +506,12 @@ enum InputBridge {
                 Object.defineProperty(ev, 'which', { get: function () { return keyCode; } });
                 const notCancelled = target.dispatchEvent(ev);
                 // Emulate text entry into editable fields for printable keys.
-                if (type === 'keydown' && notCancelled && key.length === 1) {
+                // A modifier combo is a shortcut, not typing: Ctrl+A in a
+                // game's chat box has to select all, not insert an "a" —
+                // easy to hit, since the virtual keyboard's CTRL/ALT are
+                // sticky and stay held across the following keypress.
+                if (type === 'keydown' && notCancelled && key.length === 1 &&
+                    !mods.ctrl && !mods.alt && !mods.meta) {
                     const el = document.activeElement;
                     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
                         const start = el.selectionStart, end = el.selectionEnd;
@@ -610,6 +654,139 @@ enum InputBridge {
 
             isPointerLocked: function () {
                 return !!document.pointerLockElement;
+            },
+
+            // Browser-game pages are mostly ads and site chrome around a small
+            // canvas or iframe. Blow that element up to fill the screen and
+            // hide the rest — the "fullscreen" button games rarely provide.
+            focusGame: function () {
+                try {
+                    if (state.focused) { return bridge.unfocusGame(); }
+                    const candidates = [].slice.call(
+                        document.querySelectorAll('canvas, iframe, embed, object, video'));
+                    let best = null;
+                    let bestArea = 0;
+                    for (const el of candidates) {
+                        const r = el.getBoundingClientRect();
+                        const area = r.width * r.height;
+                        if (area > bestArea && r.width > 120 && r.height > 90) {
+                            best = el;
+                            bestArea = area;
+                        }
+                    }
+                    if (!best) { return false; }
+                    state.focused = {
+                        el: best,
+                        style: best.getAttribute('style'),
+                        rootOverflow: document.documentElement.style.overflow,
+                    };
+                    best.style.cssText += ';position:fixed !important;left:0 !important;' +
+                        'top:0 !important;width:100vw !important;height:100vh !important;' +
+                        'max-width:none !important;max-height:none !important;' +
+                        'margin:0 !important;z-index:2147483647 !important;' +
+                        'background:#000 !important;';
+                    document.documentElement.style.overflow = 'hidden';
+                    window.scrollTo(0, 0);
+                    return true;
+                } catch (e) { return false; }
+            },
+
+            unfocusGame: function () {
+                try {
+                    const focused = state.focused;
+                    if (!focused) { return false; }
+                    if (typeof focused.style === 'string') {
+                        focused.el.setAttribute('style', focused.style);
+                    } else {
+                        focused.el.removeAttribute('style');
+                    }
+                    document.documentElement.style.overflow = focused.rootOverflow || '';
+                    state.focused = null;
+                    return true;
+                } catch (e) { return false; }
+            },
+
+            // Frame rate of the page's own animation loop, so it's possible to
+            // tell "this game runs badly" from "my connection is bad".
+            setFpsMeter: function (on) {
+                state.fpsWanted = !!on;
+                if (!on || state.fpsRunning || window.top !== window) { return; }
+                state.fpsRunning = true;
+                let frames = 0;
+                let last = performance.now();
+                const tick = function (now) {
+                    frames++;
+                    if (now - last >= 1000) {
+                        const fps = Math.round((frames * 1000) / (now - last));
+                        frames = 0;
+                        last = now;
+                        try {
+                            window.webkit.messageHandlers.gbEvents.postMessage({
+                                type: 'fps', value: fps,
+                            });
+                        } catch (e) {}
+                    }
+                    if (state.fpsWanted) { requestAnimationFrame(tick); }
+                    else { state.fpsRunning = false; }
+                };
+                requestAnimationFrame(tick);
+            },
+
+            // Viewport override, one mode at a time:
+            //
+            //   'desktop' — lay the page out at a desktop width. WebKit's
+            //               desktop content mode normally does this and
+            //               ignores the page's own viewport meta, in which
+            //               case this is a no-op; it is the fallback for the
+            //               pages where that doesn't take, which is what "PC
+            //               mode, but the site is still shaped for a phone"
+            //               looks like.
+            //   'zoom'    — keep the page's layout but allow pinching. Most
+            //               games ship `user-scalable=no`, which makes WebKit
+            //               clamp the scroll view to one zoom level, leaving
+            //               pinch-to-zoom nothing to zoom.
+            //   'none'    — put back whatever the page shipped.
+            setViewportMode: function (mode) {
+                try {
+                    if (window.top !== window) { return; }   // main frame only
+                    let meta = document.querySelector('meta[name="viewport"]');
+
+                    if (mode !== 'desktop' && mode !== 'zoom') {
+                        if (state.viewportPatched && meta) {
+                            if (state.originalViewport) {
+                                meta.setAttribute('content', state.originalViewport);
+                            } else {
+                                meta.remove();   // we added it ourselves
+                            }
+                        }
+                        state.viewportPatched = false;
+                        return;
+                    }
+
+                    if (!meta) {
+                        meta = document.createElement('meta');
+                        meta.setAttribute('name', 'viewport');
+                        (document.head || document.documentElement).appendChild(meta);
+                        if (typeof state.originalViewport !== 'string') {
+                            state.originalViewport = '';
+                        }
+                    } else if (typeof state.originalViewport !== 'string') {
+                        state.originalViewport = meta.getAttribute('content') || '';
+                    }
+
+                    let content;
+                    if (mode === 'desktop') {
+                        content = 'width=1024, user-scalable=yes, maximum-scale=5';
+                    } else {
+                        content = (state.originalViewport || 'width=device-width, initial-scale=1')
+                            .replace(/,?\s*user-scalable\s*=\s*[^,]*/gi, '')
+                            .replace(/,?\s*maximum-scale\s*=\s*[^,]*/gi, '')
+                            .replace(/^\s*,\s*/, '')
+                            + ', user-scalable=yes, maximum-scale=5';
+                    }
+                    meta.setAttribute('content', content);
+                    state.viewportPatched = true;
+                } catch (e) {}
             },
         };
 

@@ -21,6 +21,9 @@
         suppressKeyboard: false,
         compLen: 0,
         compTarget: null,   // element compLen applies to
+        styleTarget: null,  // element the cursor style was last sampled from
+        styleAt: 0,         // when that sample was taken (ms)
+        viewportPatched: false,   // we rewrote the page's viewport meta
     };
 
     function toPage(x, y) {
@@ -65,8 +68,11 @@
         } catch (e) {}
     }
 
+    // Returns false when the page called preventDefault, same as iOS - the
+    // right-click handler needs that to tell "the page wants this event" from
+    // "nothing is listening, show the native link menu".
     function fireMouse(type, target, x, y, button, extra) {
-        target.dispatchEvent(new MouseEvent(type, common(x, y, Object.assign({
+        return target.dispatchEvent(new MouseEvent(type, common(x, y, Object.assign({
             button: button, detail: (type === 'dblclick') ? 2 : 1,
         }, extra))));
     }
@@ -241,7 +247,16 @@
             firePointer('pointermove', target, x, y, -1, extra);
             fireMouse('mousemove', target, x, y, 0, extra);
             updateDnd(x, y);
-            post({ type: 'cursorstyle', style: getComputedStyle(target).cursor || 'auto' });
+            // getComputedStyle forces a style recalc and this runs on every
+            // pointer move (one per touch sample), so sample it when the
+            // hovered element changes and at most every 100ms otherwise.
+            const now = (window.performance && performance.now)
+                ? performance.now() : Date.now();
+            if (target !== state.styleTarget || now - state.styleAt > 100) {
+                state.styleTarget = target;
+                state.styleAt = now;
+                post({ type: 'cursorstyle', style: getComputedStyle(target).cursor || 'auto' });
+            }
         },
 
         down: function (x, y, button) {
@@ -295,7 +310,21 @@
                 fireMouse('click', target, x, y, 0);
                 if (clickCount === 2) { fireMouse('dblclick', target, x, y, 0); }
             } else if (button === 2) {
-                fireMouse('contextmenu', target, x, y, 2);
+                const notCancelled = fireMouse('contextmenu', target, x, y, 2);
+                // WebView's own long-press menu never appears in cursor mode
+                // (the trackpad overlay takes the touches), so hand the link to
+                // native for a real menu - but only when the page didn't claim
+                // the right-click for itself, which is what games do.
+                if (notCancelled && target && target.closest) {
+                    const anchor = target.closest('a[href]');
+                    if (anchor && anchor.href) {
+                        post({
+                            type: 'link',
+                            href: anchor.href,
+                            text: (anchor.textContent || '').trim().slice(0, 120),
+                        });
+                    }
+                }
             }
         },
 
@@ -330,7 +359,12 @@
             Object.defineProperty(ev, 'keyCode', { get: function () { return keyCode; } });
             Object.defineProperty(ev, 'which', { get: function () { return keyCode; } });
             const notCancelled = target.dispatchEvent(ev);
-            if (type === 'keydown' && notCancelled && key.length === 1) {
+            // A modifier combo is a shortcut, not typing: Ctrl+A in a game's
+            // chat box has to select all, not insert an "a" — easy to hit,
+            // since the virtual keyboard's CTRL/ALT are sticky and stay held
+            // across the following keypress.
+            if (type === 'keydown' && notCancelled && key.length === 1 &&
+                !mods.ctrl && !mods.alt && !mods.meta) {
                 const el = document.activeElement;
                 if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
                     const start = el.selectionStart, end = el.selectionEnd;
@@ -409,6 +443,131 @@
         },
 
         isPointerLocked: function () { return !!document.pointerLockElement; },
+
+        // Browser-game pages are mostly ads and site chrome around a small
+        // canvas or iframe. Blow that element up to fill the screen and hide
+        // the rest - the "fullscreen" button games rarely provide.
+        focusGame: function () {
+            try {
+                if (state.focused) { return bridge.unfocusGame(); }
+                const candidates = [].slice.call(
+                    document.querySelectorAll('canvas, iframe, embed, object, video'));
+                let best = null;
+                let bestArea = 0;
+                for (const el of candidates) {
+                    const r = el.getBoundingClientRect();
+                    const area = r.width * r.height;
+                    if (area > bestArea && r.width > 120 && r.height > 90) {
+                        best = el;
+                        bestArea = area;
+                    }
+                }
+                if (!best) { return false; }
+                state.focused = {
+                    el: best,
+                    style: best.getAttribute('style'),
+                    rootOverflow: document.documentElement.style.overflow,
+                };
+                best.style.cssText += ';position:fixed !important;left:0 !important;' +
+                    'top:0 !important;width:100vw !important;height:100vh !important;' +
+                    'max-width:none !important;max-height:none !important;' +
+                    'margin:0 !important;z-index:2147483647 !important;' +
+                    'background:#000 !important;';
+                document.documentElement.style.overflow = 'hidden';
+                window.scrollTo(0, 0);
+                return true;
+            } catch (e) { return false; }
+        },
+
+        unfocusGame: function () {
+            try {
+                const focused = state.focused;
+                if (!focused) { return false; }
+                if (typeof focused.style === 'string') {
+                    focused.el.setAttribute('style', focused.style);
+                } else {
+                    focused.el.removeAttribute('style');
+                }
+                document.documentElement.style.overflow = focused.rootOverflow || '';
+                state.focused = null;
+                return true;
+            } catch (e) { return false; }
+        },
+
+        // Frame rate of the page's own animation loop, so it's possible to
+        // tell "this game runs badly" from "my connection is bad".
+        setFpsMeter: function (on) {
+            state.fpsWanted = !!on;
+            if (!on || state.fpsRunning || window.top !== window) { return; }
+            state.fpsRunning = true;
+            let frames = 0;
+            let last = performance.now();
+            const tick = function (now) {
+                frames++;
+                if (now - last >= 1000) {
+                    const fps = Math.round((frames * 1000) / (now - last));
+                    frames = 0;
+                    last = now;
+                    post({ type: 'fps', value: fps });
+                }
+                if (state.fpsWanted) { requestAnimationFrame(tick); }
+                else { state.fpsRunning = false; }
+            };
+            requestAnimationFrame(tick);
+        },
+
+        // Viewport override, one mode at a time (same contract as iOS):
+        //
+        //   'desktop' — lay the page out at a desktop width. WebView honours
+        //               the page's own viewport meta, so a site pinned to
+        //               width=device-width stayed phone-shaped even under the
+        //               desktop user agent: that is exactly "PC mode doesn't
+        //               give me the PC layout".
+        //   'zoom'    — keep the page's layout but allow pinching, for the
+        //               games that ship `user-scalable=no`.
+        //   'none'    — put back whatever the page shipped.
+        setViewportMode: function (mode) {
+            try {
+                if (window.top !== window) { return; }   // main frame only
+                let meta = document.querySelector('meta[name="viewport"]');
+
+                if (mode !== 'desktop' && mode !== 'zoom') {
+                    if (state.viewportPatched && meta) {
+                        if (state.originalViewport) {
+                            meta.setAttribute('content', state.originalViewport);
+                        } else {
+                            meta.remove();   // we added it ourselves
+                        }
+                    }
+                    state.viewportPatched = false;
+                    return;
+                }
+
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.setAttribute('name', 'viewport');
+                    (document.head || document.documentElement).appendChild(meta);
+                    if (typeof state.originalViewport !== 'string') {
+                        state.originalViewport = '';
+                    }
+                } else if (typeof state.originalViewport !== 'string') {
+                    state.originalViewport = meta.getAttribute('content') || '';
+                }
+
+                let content;
+                if (mode === 'desktop') {
+                    content = 'width=1024, user-scalable=yes, maximum-scale=5';
+                } else {
+                    content = (state.originalViewport || 'width=device-width, initial-scale=1')
+                        .replace(/,?\s*user-scalable\s*=\s*[^,]*/gi, '')
+                        .replace(/,?\s*maximum-scale\s*=\s*[^,]*/gi, '')
+                        .replace(/^\s*,\s*/, '')
+                        + ', user-scalable=yes, maximum-scale=5';
+                }
+                meta.setAttribute('content', content);
+                state.viewportPatched = true;
+            } catch (e) {}
+        },
     };
 
     window.__gb = bridge;

@@ -71,7 +71,6 @@ class GamepadInput(
     private var rightTriggerDigitalHeld = false
 
     // --- trigger edge-detection + drag state -----------------------------------
-    private var leftMouseHeld = false
     private var rightTriggerWasPressed = false
     private var leftTriggerWasPressed = false
 
@@ -116,20 +115,41 @@ class GamepadInput(
     // --- disconnect handling -----------------------------------------------------
 
     private val deviceListener = object : InputManager.InputDeviceListener {
-        override fun onInputDeviceAdded(deviceId: Int) {}
+        override fun onInputDeviceAdded(deviceId: Int) {
+            reportConnection()
+        }
 
         override fun onInputDeviceRemoved(deviceId: Int) {
             // A device that just vanished can still show up in
             // getInputDevice() for the removed id, so re-scan everything
             // rather than special-casing deviceId.
             if (!hasAnyGamepadConnected()) releaseEverything()
+            reportConnection()
         }
 
-        override fun onInputDeviceChanged(deviceId: Int) {}
+        override fun onInputDeviceChanged(deviceId: Int) {
+            reportConnection()
+        }
     }
 
     init {
         inputManager?.registerInputDeviceListener(deviceListener, handler)
+        reportConnection()
+    }
+
+    /** Keeps [BrowserViewModel.gamepadConnected] in sync so the screen stays awake while playing. */
+    private fun reportConnection() {
+        viewModel.gamepadConnected = hasAnyGamepadConnected()
+    }
+
+    /**
+     * Re-scans for attached controllers. The hosting Activity calls this on
+     * create and resume: a pad paired before the first button press -- or
+     * while the app was in the background -- is otherwise invisible here
+     * until an event happens to arrive.
+     */
+    fun refreshConnectedState() {
+        reportConnection()
     }
 
     private fun hasAnyGamepadConnected(): Boolean {
@@ -162,10 +182,12 @@ class GamepadInput(
 
         for (key in buttonKeysHeld) viewModel.keyUp(key)
         buttonKeysHeld.clear()
+        slotKeys.clear()
 
-        if (leftMouseHeld) {
+        // A slot bound to "hold left button" must not leave it down.
+        if (slotMouseHeld.isNotEmpty()) {
+            slotMouseHeld.clear()
             viewModel.mouseUp()
-            leftMouseHeld = false
         }
 
         rightTriggerWasPressed = false
@@ -241,26 +263,61 @@ class GamepadInput(
                 rightTriggerDigitalHeld = down
                 updateTriggers()
             }
-            KeyEvent.KEYCODE_BUTTON_A -> setButtonKey(GbKey.space, down, event.repeatCount)
-            KeyEvent.KEYCODE_BUTTON_B -> setButtonKey(GbKey.shift, down, event.repeatCount)
-            KeyEvent.KEYCODE_BUTTON_X -> setButtonKey(GbKey.letter("e"), down, event.repeatCount)
-            KeyEvent.KEYCODE_BUTTON_Y -> setButtonKey(GbKey.letter("q"), down, event.repeatCount)
-            KeyEvent.KEYCODE_BUTTON_L1 -> setButtonKey(GbKey.letter("r"), down, event.repeatCount)
-            KeyEvent.KEYCODE_BUTTON_R1 -> setButtonKey(GbKey.letter("f"), down, event.repeatCount)
-            KeyEvent.KEYCODE_BUTTON_START -> setButtonKey(GbKey.escape, down, event.repeatCount)
+            KeyEvent.KEYCODE_BUTTON_A -> setSlot(GamepadSlot.BUTTON_A, down, event.repeatCount)
+            KeyEvent.KEYCODE_BUTTON_B -> setSlot(GamepadSlot.BUTTON_B, down, event.repeatCount)
+            KeyEvent.KEYCODE_BUTTON_X -> setSlot(GamepadSlot.BUTTON_X, down, event.repeatCount)
+            KeyEvent.KEYCODE_BUTTON_Y -> setSlot(GamepadSlot.BUTTON_Y, down, event.repeatCount)
+            KeyEvent.KEYCODE_BUTTON_L1 -> setSlot(GamepadSlot.LEFT_SHOULDER, down, event.repeatCount)
+            KeyEvent.KEYCODE_BUTTON_R1 -> setSlot(GamepadSlot.RIGHT_SHOULDER, down, event.repeatCount)
+            KeyEvent.KEYCODE_BUTTON_START -> setSlot(GamepadSlot.MENU, down, event.repeatCount)
             else -> return false
         }
         return true
     }
 
-    /** ACTION_DOWN/UP -> keyDown/keyUp, de-duplicated against OS auto-repeat and stray duplicate events. */
-    private fun setButtonKey(key: GbKey, down: Boolean, repeatCount: Int) {
-        if (down) {
-            if (repeatCount == 0 && buttonKeysHeld.add(key)) viewModel.keyDown(key)
-        } else {
-            if (buttonKeysHeld.remove(key)) viewModel.keyUp(key)
+    /**
+     * A face button, shoulder or Menu, sent through the active profile's
+     * mapping rather than a hardcoded key. A slot can send a key, a click, a
+     * held left button, or nothing at all; the previous hardcoded mapping is
+     * what an unconfigured profile still falls back to, so behaviour is
+     * unchanged until it is edited.
+     *
+     * Mouse bindings are edge-triggered (they act on the press) while key
+     * bindings stay held for as long as the button is.
+     */
+    private fun setSlot(slot: GamepadSlot, down: Boolean, repeatCount: Int) {
+        val name = viewModel.gamepadBinding(slot)
+        if (name == PadKeyName.NONE) return
+        when (name) {
+            PadKeyName.LEFT_CLICK -> if (down && repeatCount == 0) viewModel.click()
+            PadKeyName.RIGHT_CLICK -> if (down && repeatCount == 0) viewModel.click(button = 2)
+            PadKeyName.LEFT_CLICK_HOLD -> {
+                if (down) {
+                    if (repeatCount == 0 && slotMouseHeld.add(slot)) viewModel.mouseDown()
+                } else if (slotMouseHeld.remove(slot)) {
+                    viewModel.mouseUp()
+                }
+            }
+            else -> {
+                val key = KeyCatalog.key(name) ?: return
+                // The binding can change under a held button, so the key that
+                // went down is the one that has to come back up.
+                if (down) {
+                    if (repeatCount == 0 && slotKeys[slot] == null) {
+                        slotKeys[slot] = key
+                        if (buttonKeysHeld.add(key)) viewModel.keyDown(key)
+                    }
+                } else {
+                    val held = slotKeys.remove(slot) ?: return
+                    if (buttonKeysHeld.remove(held)) viewModel.keyUp(held)
+                }
+            }
         }
     }
+
+    /** Key each slot actually pressed, so a re-binding mid-hold still releases it. */
+    private val slotKeys = mutableMapOf<GamepadSlot, GbKey>()
+    private val slotMouseHeld = mutableSetOf<GamepadSlot>()
 
     // --- generic motion events (analog sticks, hat switch, analog triggers) ------
 
@@ -313,24 +370,16 @@ class GamepadInput(
         val rightValue = maxOf(analogRightTrigger, if (rightTriggerDigitalHeld) 1f else 0f)
         val leftValue = maxOf(analogLeftTrigger, if (leftTriggerDigitalHeld) 1f else 0f)
 
-        // R2: hold = left mouse button held (aim/drag), release = mouse up.
         val rightPressed = rightValue > TRIGGER_PRESS_THRESHOLD
         if (rightPressed != rightTriggerWasPressed) {
             rightTriggerWasPressed = rightPressed
-            if (rightPressed) {
-                viewModel.mouseDown()
-                leftMouseHeld = true
-            } else if (leftMouseHeld) {
-                viewModel.mouseUp()
-                leftMouseHeld = false
-            }
+            setSlot(GamepadSlot.RIGHT_TRIGGER, rightPressed, repeatCount = 0)
         }
 
-        // L2: right click on press.
         val leftPressed = leftValue > TRIGGER_PRESS_THRESHOLD
         if (leftPressed != leftTriggerWasPressed) {
             leftTriggerWasPressed = leftPressed
-            if (leftPressed) viewModel.click(button = 2)
+            setSlot(GamepadSlot.LEFT_TRIGGER, leftPressed, repeatCount = 0)
         }
     }
 

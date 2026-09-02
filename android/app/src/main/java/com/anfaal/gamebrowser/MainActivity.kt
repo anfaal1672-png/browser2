@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -95,6 +96,10 @@ class MainActivity : FragmentActivity() {
         // if none are enrolled, AppLock.authenticate's own "don't lock the user out" fallback).
         if (viewModel.appLockEnabled) viewModel.isLocked = true
 
+        // Also forces the lazy GamepadInput to exist now, so its device
+        // listener is registered before the first controller event arrives.
+        gamepadInput.refreshConnectedState()
+
         HighlightRecorder.onRequestConsent = {
             screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
         }
@@ -110,128 +115,184 @@ class MainActivity : FragmentActivity() {
         }
 
         setContent {
-            var showTabs by remember { mutableStateOf(false) }
-            var showSettings by remember { mutableStateOf(false) }
-            var showBookmarks by remember { mutableStateOf(false) }
-            var showHistory by remember { mutableStateOf(false) }
-            var showFindBar by remember { mutableStateOf(false) }
-            var findQuery by remember { mutableStateOf("") }
+            GBAppTheme {
+                var showTabs by remember { mutableStateOf(false) }
+                var showSettings by remember { mutableStateOf(false) }
+                var showBookmarks by remember { mutableStateOf(false) }
+                var showHistory by remember { mutableStateOf(false) }
+                var showFindBar by remember { mutableStateOf(false) }
+                var findQuery by remember { mutableStateOf("") }
 
-            fun dismissFindBar() {
-                if (!showFindBar) return
-                showFindBar = false
-                findQuery = ""
-                viewModel.clearFindSelection()
-            }
-
-            // Hides/shows the system status/nav bars to match viewModel.immersive,
-            // mirroring ContentView.swift's `.overlay(alignment: .topTrailing)` fullscreen mode.
-            LaunchedEffect(viewModel.immersive) {
-                val controller = WindowCompat.getInsetsController(window, window.decorView)
-                if (viewModel.immersive) {
-                    controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    controller.hide(WindowInsetsCompat.Type.systemBars())
-                } else {
-                    controller.show(WindowInsetsCompat.Type.systemBars())
+                fun dismissFindBar() {
+                    if (!showFindBar) return
+                    showFindBar = false
+                    findQuery = ""
+                    viewModel.clearFindSelection()
                 }
-            }
 
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    if (!viewModel.immersive && !viewModel.toolbarOnBottom) {
-                        BrowserToolbar(
-                            viewModel,
-                            onTabsClick = { showTabs = true },
-                            onSettingsClick = { showSettings = true },
-                            onBookmarksClick = { showBookmarks = true },
-                            onHistoryClick = { showHistory = true },
-                            onFindClick = { showFindBar = true },
-                        )
-                        if (showFindBar) {
-                            FindBar(viewModel, findQuery, { findQuery = it }, onDismiss = ::dismissFindBar)
+                // Playing with a controller produces no touches at all, and neither
+                // does a long cutscene in fullscreen, so the display would dim and
+                // lock mid-game. Hold it awake only for those two explicit "playing"
+                // signals; ordinary browsing still sleeps normally.
+                LaunchedEffect(viewModel.immersive, viewModel.gamepadConnected) {
+                    if (viewModel.immersive || viewModel.gamepadConnected) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                }
+
+                // Hides/shows the system status/nav bars to match viewModel.immersive,
+                // mirroring ContentView.swift's `.overlay(alignment: .topTrailing)` fullscreen mode.
+                LaunchedEffect(viewModel.immersive) {
+                    val controller = WindowCompat.getInsetsController(window, window.decorView)
+                    if (viewModel.immersive) {
+                        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                        controller.hide(WindowInsetsCompat.Type.systemBars())
+                    } else {
+                        controller.show(WindowInsetsCompat.Type.systemBars())
+                    }
+                }
+
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (!viewModel.immersive && !viewModel.toolbarOnBottom) {
+                            BrowserToolbar(
+                                viewModel,
+                                onTabsClick = { showTabs = true },
+                                onSettingsClick = { showSettings = true },
+                                onBookmarksClick = { showBookmarks = true },
+                                onHistoryClick = { showHistory = true },
+                                onFindClick = { showFindBar = true },
+                            )
+                            if (showFindBar) {
+                                FindBar(viewModel, findQuery, { findQuery = it }, onDismiss = ::dismissFindBar)
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                                .onSizeChanged { size ->
+                                    viewModel.webViewSize = Pair(size.width.toFloat(), size.height.toFloat())
+                                },
+                        ) {
+                            GameWebView(viewModel, modifier = Modifier.fillMaxSize())
+                            if (viewModel.cursorMode) {
+                                TrackpadOverlay(viewModel, modifier = Modifier.fillMaxSize())
+                                CursorOverlay(viewModel, modifier = Modifier.fillMaxSize())
+                            }
+                            if (viewModel.cursorMode && viewModel.showScrollButtons) {
+                                ScrollButtons(viewModel, modifier = Modifier.align(Alignment.CenterEnd))
+                            }
+                            if (viewModel.immersive) {
+                                ImmersiveExitControls(viewModel, modifier = Modifier.align(Alignment.TopEnd).padding(10.dp))
+                            }
+                            if (viewModel.highlightsEnabled) {
+                                HighlightButton(viewModel, modifier = Modifier.align(Alignment.TopStart))
+                            }
+                            if (viewModel.showFps) {
+                                FpsBadge(viewModel, modifier = Modifier.align(Alignment.BottomStart))
+                            }
+                            // The pads sit above the page and the trackpad overlay:
+                            // a button must take the touch rather than moving the
+                            // cursor underneath it.
+                            if (viewModel.padVisible) {
+                                ControlPadOverlay(viewModel, modifier = Modifier.fillMaxSize())
+                            }
+                        }
+
+                        if (viewModel.pendingCredential != null) {
+                            CredentialSavePrompt(viewModel)
+                        }
+                        if (viewModel.autofillSuggestions.isNotEmpty() || viewModel.cardSuggestionVisible) {
+                            AutofillBar(viewModel)
+                        }
+
+                        if (viewModel.keyboardVisible) {
+                            VirtualKeyboardHost(viewModel)
+                        }
+
+                        if (viewModel.pcMode && !viewModel.immersive) {
+                            ControlBar(viewModel)
+                        }
+
+                        if (!viewModel.immersive && viewModel.toolbarOnBottom) {
+                            if (showFindBar) {
+                                FindBar(viewModel, findQuery, { findQuery = it }, onDismiss = ::dismissFindBar)
+                            }
+                            BrowserToolbar(
+                                viewModel,
+                                onTabsClick = { showTabs = true },
+                                onSettingsClick = { showSettings = true },
+                                onBookmarksClick = { showBookmarks = true },
+                                onHistoryClick = { showHistory = true },
+                                onFindClick = { showFindBar = true },
+                            )
                         }
                     }
 
-                    Box(
+                    if (viewModel.isLocked) {
+                        LockScreen(onUnlockClick = ::attemptUnlock)
+                    }
+
+                    if (showTabs) {
+                        TabsScreen(viewModel.tabManager, onDismiss = { showTabs = false }, modifier = Modifier.fillMaxSize())
+                    }
+                    if (showSettings) {
+                        SettingsScreen(viewModel, onDismiss = { showSettings = false }, modifier = Modifier.fillMaxSize())
+                    }
+                    if (showBookmarks) {
+                        BookmarksScreen(viewModel, onDismiss = { showBookmarks = false }, modifier = Modifier.fillMaxSize())
+                    }
+                    if (showHistory) {
+                        HistoryScreen(viewModel, onDismiss = { showHistory = false }, modifier = Modifier.fillMaxSize())
+                    }
+                    if (viewModel.showProfiles) {
+                        ControlProfilesScreen(
+                            viewModel,
+                            onDismiss = { viewModel.showProfiles = false },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    if (viewModel.showPadInspector) {
+                        PadInspectorScreen(
+                            viewModel,
+                            onDismiss = { viewModel.showPadInspector = false },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    if (viewModel.showDownloads) {
+                        DownloadsScreen(
+                            viewModel.downloads,
+                            onDismiss = { viewModel.showDownloads = false },
+                            modifier = Modifier.fillMaxSize(),
+                            accent = if (viewModel.isPrivateTab) GB.privateAccent else GB.accent,
+                        )
+                    }
+
+                    // Right-clicking a link in cursor mode, and the confirmations
+                    // for things that otherwise happen invisibly.
+                    LinkMenu(viewModel)
+                    ToastHost(
+                        viewModel,
                         modifier = Modifier
-                            .weight(1f)
-                            .fillMaxSize()
-                            .onSizeChanged { size ->
-                                viewModel.webViewSize = Pair(size.width.toFloat(), size.height.toFloat())
-                            },
-                    ) {
-                        GameWebView(viewModel, modifier = Modifier.fillMaxSize())
-                        if (viewModel.cursorMode) {
-                            TrackpadOverlay(viewModel, modifier = Modifier.fillMaxSize())
-                            CursorOverlay(viewModel, modifier = Modifier.fillMaxSize())
-                        }
-                        if (viewModel.cursorMode && viewModel.showScrollButtons) {
-                            ScrollButtons(viewModel, modifier = Modifier.align(Alignment.CenterEnd))
-                        }
-                        if (viewModel.immersive) {
-                            ImmersiveExitControls(viewModel, modifier = Modifier.align(Alignment.TopEnd).padding(10.dp))
-                        }
-                        if (viewModel.highlightsEnabled) {
-                            HighlightButton(viewModel, modifier = Modifier.align(Alignment.TopStart))
-                        }
-                    }
-
-                    if (viewModel.pendingCredential != null) {
-                        CredentialSavePrompt(viewModel)
-                    }
-                    if (viewModel.autofillSuggestions.isNotEmpty() || viewModel.cardSuggestionVisible) {
-                        AutofillBar(viewModel)
-                    }
-
-                    if (viewModel.keyboardVisible) {
-                        VirtualKeyboardHost(viewModel)
-                    }
-
-                    if (viewModel.pcMode && !viewModel.immersive) {
-                        ControlBar(viewModel)
-                    }
-
-                    if (!viewModel.immersive && viewModel.toolbarOnBottom) {
-                        if (showFindBar) {
-                            FindBar(viewModel, findQuery, { findQuery = it }, onDismiss = ::dismissFindBar)
-                        }
-                        BrowserToolbar(
-                            viewModel,
-                            onTabsClick = { showTabs = true },
-                            onSettingsClick = { showSettings = true },
-                            onBookmarksClick = { showBookmarks = true },
-                            onHistoryClick = { showHistory = true },
-                            onFindClick = { showFindBar = true },
-                        )
-                    }
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 90.dp),
+                    )
                 }
 
-                if (viewModel.isLocked) {
-                    LockScreen(onUnlockClick = ::attemptUnlock)
+                LaunchedEffect(Unit) {
+                    viewModel.applyKeyboardSuppression()
                 }
-
-                if (showTabs) {
-                    TabsScreen(viewModel.tabManager, onDismiss = { showTabs = false }, modifier = Modifier.fillMaxSize())
-                }
-                if (showSettings) {
-                    SettingsScreen(viewModel, onDismiss = { showSettings = false }, modifier = Modifier.fillMaxSize())
-                }
-                if (showBookmarks) {
-                    BookmarksScreen(viewModel, onDismiss = { showBookmarks = false }, modifier = Modifier.fillMaxSize())
-                }
-                if (showHistory) {
-                    HistoryScreen(viewModel, onDismiss = { showHistory = false }, modifier = Modifier.fillMaxSize())
-                }
-            }
-
-            LaunchedEffect(Unit) {
-                viewModel.applyKeyboardSuppression()
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
+        gamepadInput.refreshConnectedState()
         if (viewModel.isLocked) attemptUnlock()
     }
 
@@ -291,7 +352,7 @@ private fun FloatingButton(icon: androidx.compose.ui.graphics.vector.ImageVector
         contentAlignment = Alignment.Center,
     ) {
         IconButton(onClick = onClick) {
-            Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = 0.9f))
+            Icon(icon, contentDescription = null, tint = GB.text.copy(alpha = 0.9f))
         }
     }
 }
@@ -302,7 +363,7 @@ private fun LockScreen(onUnlockClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.94f)),
+            .background(GB.background),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {

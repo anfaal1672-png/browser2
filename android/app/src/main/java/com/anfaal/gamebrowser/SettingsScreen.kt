@@ -23,11 +23,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
@@ -48,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
@@ -138,28 +139,27 @@ private fun trackingLevelLabel(level: Int): String = when (level) {
 }
 
 // ----------------------------------------------------------------------------
-// Palette. Accent matches the cyan already used elsewhere in this port
-// (Toolbar.kt's progress bar/cursor color, TabsScreen.kt's active-tab border) —
-// plain Compose Color.Cyan, not a hand-picked iOS system-color hex, to stay
-// consistent with the rest of this codebase. The card-icon tints below are
-// standard Material Design palette colors (Blue/Orange/Purple/... 500), one
-// per card, mirroring the distinct SwiftUI system-color tint each card icon
-// uses in SettingsView.swift.
+// Palette. Everything structural comes from Theme.kt's GB tokens, so this
+// screen cannot drift from the rest of the app. The per-card icon tints are
+// the iOS dark-mode system colours SettingsView.swift names (.blue, .orange,
+// .purple, ...) rather than the Material palette, so the two settings screens
+// are the same screen rather than two takes on one.
 // ----------------------------------------------------------------------------
 
-private val Accent = Color.Cyan
-private val TintBlue = Color(0xFF2196F3)
-private val TintOrange = Color(0xFFFF9800)
-private val TintPurple = Color(0xFF9C27B0)
-private val TintYellow = Color(0xFFFFC107)
-private val TintGreen = Color(0xFF4CAF50)
-private val TintTeal = Color(0xFF009688)
-private val TintRed = Color(0xFFF44336)
-private val TintPink = Color(0xFFE91E63)
-private val TintIndigo = Color(0xFF3F51B5)
+private val Accent = GB.accent
+private val TintBlue = Color(0xFF0A84FF)
+private val TintOrange = Color(0xFFFF9F0A)
+private val TintPurple = Color(0xFFBF5AF2)
+private val TintYellow = Color(0xFFFFD60A)
+private val TintGreen = Color(0xFF30D158)
+private val TintTeal = Color(0xFF40C8E0)
+private val TintRed = Color(0xFFFF453A)
+private val TintPink = Color(0xFFFF375F)
+private val TintIndigo = Color(0xFF5E5CE6)
+private val TintGray = Color(0xFF8E8E93)
 
-private val BackgroundTop = Color(0xFF0D121A)
-private val BackgroundBottom = Color(0xFF05080D)
+/** Sheet backdrop for the card editor; the screen itself uses GBSheet's. */
+private val BackgroundTop = GB.bg
 
 /**
  * Custom-designed settings screen: dark surface cards with tinted section
@@ -189,10 +189,15 @@ fun SettingsScreen(
 ) {
     var showCardEditor by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(BackgroundTop, BackgroundBottom))),
+    // The header is deliberately outside the scrolling column: it used to be
+    // the first row inside it, so the close button scrolled away and getting
+    // out of a settings screen this long meant scrolling all the way back up.
+    // GBSheet is the same chrome every other sheet in the app already uses.
+    GBSheet(
+        title = loc("設定", "Settings"),
+        onDismiss = onDismiss,
+        modifier = modifier,
+        accent = if (viewModel.isPrivateTab) GB.privateAccent else GB.accent,
     ) {
         Column(
             modifier = Modifier
@@ -201,7 +206,6 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            SettingsHeader(onDismiss)
             BrowserModeCard(viewModel)
             ControlsCard(viewModel)
             SearchCard(viewModel, onDismiss)
@@ -212,40 +216,13 @@ fun SettingsScreen(
             DataCard(viewModel)
             HighlightsCard(viewModel)
             BackgroundCard(viewModel)
+            ResetAllCard(viewModel)
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
 
     if (showCardEditor) {
         CardEditorSheet(viewModel, onDismiss = { showCardEditor = false })
-    }
-}
-
-@Composable
-private fun SettingsHeader(onDismiss: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 20.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(loc("設定", "Settings"), color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.1f))
-                .clickable(onClick = onDismiss),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Filled.Close,
-                contentDescription = loc("閉じる", "Close"),
-                tint = Color.White.copy(alpha = 0.8f),
-                modifier = Modifier.size(14.dp),
-            )
-        }
     }
 }
 
@@ -257,7 +234,8 @@ private fun SettingsHeader(onDismiss: () -> Unit) {
 
 @Composable
 private fun BrowserModeCard(viewModel: BrowserViewModel) {
-    SettingsCard(icon = Icons.Filled.SportsEsports, tint = Accent, title = loc("ブラウザモード", "Browser mode")) {
+    SettingsCard(icon = Icons.Filled.SportsEsports, tint = Accent, title = loc("ブラウザモード", "Browser mode"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.BROWSER_MODE) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ModeButton(
                 label = loc("スマホ", "Phone"),
@@ -290,7 +268,8 @@ private fun BrowserModeCard(viewModel: BrowserViewModel) {
 
 @Composable
 private fun ControlsCard(viewModel: BrowserViewModel) {
-    SettingsCard(icon = Icons.Filled.Mouse, tint = TintBlue, title = loc("操作", "Controls")) {
+    SettingsCard(icon = Icons.Filled.Mouse, tint = TintBlue, title = loc("操作", "Controls"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.CONTROLS) {
         Labeled(loc("操作スキーム", "Control scheme")) {
             Chips(
                 options = ControlScheme.entries.map { it to it.label },
@@ -333,6 +312,9 @@ private fun ControlsCard(viewModel: BrowserViewModel) {
 
         SettingsDivider()
         ToggleRow(loc("触覚フィードバック", "Haptic feedback"), viewModel.hapticsEnabled) { viewModel.hapticsEnabled = it }
+        ToggleRow(loc("FPS(フレームレート)を表示", "Show FPS meter"), viewModel.showFps) {
+            viewModel.showFps = it
+        }
         ToggleRow(loc("ジョイスティック: 矢印キーを送信", "Joystick sends arrow keys"), viewModel.joystickUsesArrows) {
             viewModel.joystickUsesArrows = it
         }
@@ -344,7 +326,8 @@ private fun ControlsCard(viewModel: BrowserViewModel) {
 
 @Composable
 private fun SearchCard(viewModel: BrowserViewModel, onDismiss: () -> Unit) {
-    SettingsCard(icon = Icons.Filled.Search, tint = TintOrange, title = loc("検索とタブ", "Search & tabs")) {
+    SettingsCard(icon = Icons.Filled.Search, tint = TintOrange, title = loc("検索とタブ", "Search & tabs"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.SEARCH_TABS) {
         Labeled(loc("検索エンジン", "Search engine")) {
             Chips(
                 options = SearchEngine.entries.map { it to it.label },
@@ -372,7 +355,8 @@ private fun SearchCard(viewModel: BrowserViewModel, onDismiss: () -> Unit) {
 
 @Composable
 private fun AppearanceCard(viewModel: BrowserViewModel) {
-    SettingsCard(icon = Icons.Filled.Palette, tint = TintPurple, title = loc("外観", "Appearance")) {
+    SettingsCard(icon = Icons.Filled.Palette, tint = TintPurple, title = loc("外観", "Appearance"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.APPEARANCE) {
         Labeled(loc("テーマ", "Theme")) {
             // 0 = Dark, 1 = Light, 2 = System — NOTE this ordering is different
             // from appLanguage's 0 = System below; both are ported verbatim
@@ -416,7 +400,8 @@ private fun AppearanceCard(viewModel: BrowserViewModel) {
 
 @Composable
 private fun AutofillCard(viewModel: BrowserViewModel, onEditCard: () -> Unit) {
-    SettingsCard(icon = Icons.Filled.VpnKey, tint = TintYellow, title = loc("自動入力", "Autofill")) {
+    SettingsCard(icon = Icons.Filled.VpnKey, tint = TintYellow, title = loc("自動入力", "Autofill"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.AUTOFILL) {
         ToggleRow(loc("パスワード・カードの自動入力", "Autofill passwords & cards"), viewModel.autofillEnabled) {
             viewModel.autofillEnabled = it
         }
@@ -471,7 +456,8 @@ private fun AutofillCard(viewModel: BrowserViewModel, onEditCard: () -> Unit) {
 
 @Composable
 private fun SecurityCard(viewModel: BrowserViewModel) {
-    SettingsCard(icon = Icons.Filled.Shield, tint = TintGreen, title = loc("セキュリティ", "Security")) {
+    SettingsCard(icon = Icons.Filled.Shield, tint = TintGreen, title = loc("セキュリティ", "Security"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.SECURITY) {
         ToggleRow(loc("広告ブロック", "Ad blocking"), viewModel.adBlockEnabled) { viewModel.adBlockEnabled = it }
         if (viewModel.adBlockEnabled) {
             Box(modifier = Modifier.padding(start = 12.dp)) {
@@ -513,7 +499,8 @@ private fun SecurityCard(viewModel: BrowserViewModel) {
 
 @Composable
 private fun PermissionsCard(viewModel: BrowserViewModel) {
-    SettingsCard(icon = Icons.Filled.Security, tint = TintTeal, title = loc("サイトの権限", "Site permissions")) {
+    SettingsCard(icon = Icons.Filled.Security, tint = TintTeal, title = loc("サイトの権限", "Site permissions"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.PERMISSIONS) {
         Labeled(loc("カメラ・マイク", "Camera & microphone")) {
             Chips(
                 options = CapturePolicy.entries.map { it to it.label },
@@ -580,7 +567,8 @@ private fun DataCard(viewModel: BrowserViewModel) {
 
 @Composable
 private fun HighlightsCard(viewModel: BrowserViewModel) {
-    SettingsCard(icon = Icons.Filled.Videocam, tint = TintPink, title = loc("ハイライト", "Highlights")) {
+    SettingsCard(icon = Icons.Filled.Videocam, tint = TintPink, title = loc("ハイライト", "Highlights"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.HIGHLIGHTS) {
         ToggleRow(loc("インスタントリプレイを有効にする", "Enable instant replay"), viewModel.highlightsEnabled) {
             viewModel.highlightsEnabled = it
         }
@@ -597,7 +585,8 @@ private fun HighlightsCard(viewModel: BrowserViewModel) {
 
 @Composable
 private fun BackgroundCard(viewModel: BrowserViewModel) {
-    SettingsCard(icon = Icons.Filled.Bedtime, tint = TintIndigo, title = loc("バックグラウンド", "Background")) {
+    SettingsCard(icon = Icons.Filled.Bedtime, tint = TintIndigo, title = loc("バックグラウンド", "Background"),
+        viewModel = viewModel, section = BrowserViewModel.SettingsSection.BACKGROUND) {
         ToggleRow(loc("バックグラウンドで実行を継続", "Keep running in background"), viewModel.keepAliveInBackground) {
             viewModel.keepAliveInBackground = it
         }
@@ -707,14 +696,16 @@ private fun SettingsCard(
     icon: ImageVector,
     tint: Color,
     title: String,
+    viewModel: BrowserViewModel? = null,
+    section: BrowserViewModel.SettingsSection? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+            .background(GB.surface)
+            .border(1.dp, GB.border, RoundedCornerShape(GB.Radius.large))
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -729,14 +720,110 @@ private fun SettingsCard(
                 Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
             }
             Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            if (viewModel != null && section != null) {
+                Spacer(Modifier.weight(1f))
+                ResetButton { viewModel.resetSettings(section) }
+            }
         }
         content()
     }
 }
 
+/**
+ * Header reset. A section already at its factory values changes nothing on
+ * screen, so the button confirms with a checkmark for a moment rather than
+ * looking dead - same as the iOS card headers.
+ */
+@Composable
+private fun ResetButton(onReset: () -> Unit) {
+    var justReset by remember { mutableStateOf(false) }
+    LaunchedEffect(justReset) {
+        if (justReset) {
+            delay(1200)
+            justReset = false
+        }
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(GB.surfaceHigh)
+            .clickable {
+                onReset()
+                justReset = true
+            }
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            if (justReset) Icons.Filled.Check else Icons.Filled.Restore,
+            contentDescription = null,
+            tint = if (justReset) GB.success else GB.textDim,
+            modifier = Modifier.size(13.dp),
+        )
+        Text(
+            if (justReset) loc("戻しました", "Reset") else loc("リセット", "Reset"),
+            color = if (justReset) GB.success else GB.textDim,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
+ * The last card: everything back at once, behind a confirmation. Browsing data
+ * is deliberately out of scope, and the text says so.
+ */
+@Composable
+private fun ResetAllCard(viewModel: BrowserViewModel) {
+    var confirming by remember { mutableStateOf(false) }
+    SettingsCard(
+        icon = Icons.Filled.Restore,
+        tint = TintGray,
+        title = loc("すべての設定をリセット", "Reset all settings"),
+    ) {
+        Text(
+            text = loc(
+                "すべての設定を初期値に戻します。ブックマーク・履歴・保存したパスワードやカード・" +
+                    "開いているタブ・ダウンロードはそのまま残ります。",
+                "Puts every setting back to its factory value. Bookmarks, history, saved " +
+                    "passwords and cards, open tabs and downloads are all left alone.",
+            ),
+            color = GB.textDim,
+            fontSize = 11.sp,
+        )
+        if (confirming) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GBPrimaryButton(
+                    title = loc("リセットする", "Reset everything"),
+                    destructive = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        viewModel.resetAllSettings()
+                        confirming = false
+                    },
+                )
+                GBQuietButton(
+                    title = loc("キャンセル", "Cancel"),
+                    tint = GB.textDim,
+                    modifier = Modifier.weight(1f),
+                    onClick = { confirming = false },
+                )
+            }
+        } else {
+            GBQuietButton(
+                title = loc("すべてリセット", "Reset all"),
+                icon = Icons.Filled.Restore,
+                tint = GB.danger,
+                onClick = { confirming = true },
+            )
+        }
+    }
+}
+
 @Composable
 private fun SettingsDivider() {
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f), thickness = 1.dp)
+    HorizontalDivider(color = GB.border, thickness = 1.dp)
 }
 
 @Composable

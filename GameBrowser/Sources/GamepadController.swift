@@ -6,16 +6,20 @@ import UIKit
 /// to the virtual input bridge:
 ///  - left stick / d-pad → WASD held keys
 ///  - right stick        → cursor movement
-///  - A → Space, B → Shift, X → E, Y → Q, L1 → R, R1 → F, Menu → Escape
-///  - R2 → left mouse button (hold to drag), L2 → right click
+///  - every button and trigger → whatever the active control profile binds it
+///    to (a key, a mouse click, a held mouse button, or nothing). The stock
+///    mapping — A: Space, B: Shift, X: E, Y: Q, L1: R, R1: F, Menu: Escape,
+///    R2: hold left button, L2: right click — is what an unconfigured
+///    profile falls back to, so this behaves as before until it's changed.
 @MainActor
 final class GamepadController {
     private weak var viewModel: BrowserViewModel?
     private var displayLink: CADisplayLink?
     private var heldKeys: Set<InputBridge.Key> = []
     private var leftMouseHeld = false
-    private var rightTriggerWasPressed = false
-    private var leftTriggerWasPressed = false
+    /// Slots whose binding is a mouse action, and are currently pressed —
+    /// mouse bindings are edge-triggered rather than diffed like keys.
+    private var mouseSlotsDown: Set<GamepadSlot> = []
 
     private let stickThreshold: Float = 0.35
     private let cursorSpeed: CGFloat = 11
@@ -26,14 +30,27 @@ final class GamepadController {
         NotificationCenter.default.addObserver(
             forName: .GCControllerDidConnect, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.startPolling() }
+            Task { @MainActor in
+                self?.startPolling()
+                self?.reportConnection()
+            }
         }
         NotificationCenter.default.addObserver(
             forName: .GCControllerDidDisconnect, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.stopPollingIfIdle() }
+            Task { @MainActor in
+                self?.stopPollingIfIdle()
+                self?.reportConnection()
+            }
         }
+        reportConnection()
         if !GCController.controllers().isEmpty { startPolling() }
+    }
+
+    /// Controller input never touches the screen, so the view model needs to
+    /// know a pad is attached to keep the display from sleeping mid-game.
+    private func reportConnection() {
+        viewModel?.gamepadConnected = !GCController.controllers().isEmpty
     }
 
     private func startPolling() {
@@ -76,37 +93,56 @@ final class GamepadController {
         if lx < -stickThreshold || pad.dpad.left.isPressed { wanted.insert(InputBridge.letter("a")) }
         if lx > stickThreshold || pad.dpad.right.isPressed { wanted.insert(InputBridge.letter("d")) }
 
-        // Face / shoulder buttons → common game keys.
-        if pad.buttonA.isPressed { wanted.insert(InputBridge.space) }
-        if pad.buttonB.isPressed { wanted.insert(InputBridge.shift) }
-        if pad.buttonX.isPressed { wanted.insert(InputBridge.letter("e")) }
-        if pad.buttonY.isPressed { wanted.insert(InputBridge.letter("q")) }
-        if pad.leftShoulder.isPressed { wanted.insert(InputBridge.letter("r")) }
-        if pad.rightShoulder.isPressed { wanted.insert(InputBridge.letter("f")) }
-        if pad.buttonMenu.isPressed { wanted.insert(InputBridge.escape) }
+        // Every mappable button, resolved through the active profile.
+        let states: [(GamepadSlot, Bool)] = [
+            (.buttonA, pad.buttonA.isPressed),
+            (.buttonB, pad.buttonB.isPressed),
+            (.buttonX, pad.buttonX.isPressed),
+            (.buttonY, pad.buttonY.isPressed),
+            (.leftShoulder, pad.leftShoulder.isPressed),
+            (.rightShoulder, pad.rightShoulder.isPressed),
+            (.menu, pad.buttonMenu.isPressed),
+            (.leftTrigger, pad.leftTrigger.isPressed),
+            (.rightTrigger, pad.rightTrigger.isPressed),
+        ]
+        for (slot, pressed) in states {
+            let binding = viewModel.gamepadBinding(slot)
+            if let key = KeyCatalog.key(binding) {
+                if pressed { wanted.insert(key) }
+            } else {
+                updateMouseBinding(binding, slot: slot, pressed: pressed)
+            }
+        }
 
         for key in heldKeys.subtracting(wanted) { viewModel.keyUp(key) }
         for key in wanted.subtracting(heldKeys) { viewModel.keyDown(key) }
         heldKeys = wanted
+    }
 
-        // R2: hold = left mouse button held (aim/drag), release = mouse up.
-        let rightPressed = pad.rightTrigger.isPressed
-        if rightPressed != rightTriggerWasPressed {
-            rightTriggerWasPressed = rightPressed
-            if rightPressed {
+    /// Mouse bindings fire on the press/release edge instead of being held
+    /// like a key: a click is a click, and "hold" keeps the button down for
+    /// as long as the physical control is.
+    private func updateMouseBinding(_ binding: String, slot: GamepadSlot, pressed: Bool) {
+        guard let viewModel else { return }
+        let wasDown = mouseSlotsDown.contains(slot)
+        guard pressed != wasDown else { return }
+        if pressed { mouseSlotsDown.insert(slot) } else { mouseSlotsDown.remove(slot) }
+
+        switch binding {
+        case PadKeyName.leftClickHold:
+            if pressed {
                 viewModel.mouseDown()
                 leftMouseHeld = true
             } else if leftMouseHeld {
                 viewModel.mouseUp()
                 leftMouseHeld = false
             }
-        }
-
-        // L2: right click on press.
-        let leftPressed = pad.leftTrigger.isPressed
-        if leftPressed != leftTriggerWasPressed {
-            leftTriggerWasPressed = leftPressed
-            if leftPressed { viewModel.click(button: 2) }
+        case PadKeyName.leftClick:
+            if pressed { viewModel.click() }
+        case PadKeyName.rightClick:
+            if pressed { viewModel.click(button: 2) }
+        default:
+            break   // unbound
         }
     }
 
@@ -118,11 +154,10 @@ final class GamepadController {
             viewModel.mouseUp()
             leftMouseHeld = false
         }
-        // Without this, a trigger still physically held across a disconnect/
+        // Without this, a control still physically held across a disconnect/
         // reconnect (e.g. a momentary Bluetooth drop) reads as "unchanged"
         // on the next tick and never fires mouseDown()/click() again until
         // the user fully releases and re-presses it.
-        rightTriggerWasPressed = false
-        leftTriggerWasPressed = false
+        mouseSlotsDown.removeAll()
     }
 }

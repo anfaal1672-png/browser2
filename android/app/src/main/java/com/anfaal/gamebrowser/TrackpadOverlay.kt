@@ -12,11 +12,21 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
+import kotlin.math.hypot
 
 private const val TAP_MAX_DURATION_MS = 300L
 private const val TAP_MAX_MOVEMENT = 10f
 private const val LONG_PRESS_DELAY_MS = 450L
 private const val SCROLL_SPEED = 2.2f
+
+/**
+ * How far the fingers must spread (or the pair must travel) before a
+ * two-finger gesture commits to being a pinch or a scroll. Classifying once
+ * and staying with it is what stops a scroll from drifting into a zoom
+ * halfway down a page - the same rule the iOS trackpad uses.
+ */
+private const val PINCH_SLOP = 24f
+private const val PAN_SLOP = 18f
 
 /**
  * Full-area touch surface layered over the WebView when in cursor mode.
@@ -40,6 +50,11 @@ fun TrackpadOverlay(viewModel: BrowserViewModel, modifier: Modifier = Modifier) 
                     var isDragging = false
                     var isTwoFingerGesture = false
                     var twoFingerMoved = false
+                    var startDistance = 0f
+                    var lastDistance = 0f
+                    var panTravelled = 0f
+                    var twoFingerClassified = false
+                    var isPinch = false
                     var longPressResolved = false
                     var tapEligible = true
 
@@ -72,6 +87,10 @@ fun TrackpadOverlay(viewModel: BrowserViewModel, modifier: Modifier = Modifier) 
                             longPressResolved = true
                             isTwoFingerGesture = true
                             twoFingerMoved = false
+                            startDistance = 0f
+                            panTravelled = 0f
+                            twoFingerClassified = false
+                            isPinch = false
                         }
 
                         if (isTwoFingerGesture && pressedChanges.size >= 2) {
@@ -85,8 +104,40 @@ fun TrackpadOverlay(viewModel: BrowserViewModel, modifier: Modifier = Modifier) 
                             }
                             dx /= pressedChanges.size
                             dy /= pressedChanges.size
-                            if (abs(dx) + abs(dy) > 0.5f) twoFingerMoved = true
-                            viewModel.scroll(-dx * SCROLL_SPEED, -dy * SCROLL_SPEED)
+
+                            val a = pressedChanges[0].position
+                            val b = pressedChanges[1].position
+                            val distance = hypot(b.x - a.x, b.y - a.y)
+                            if (startDistance <= 0f) {
+                                startDistance = distance
+                                lastDistance = distance
+                            }
+                            panTravelled += abs(dx) + abs(dy)
+                            val spread = abs(distance - startDistance)
+
+                            // Decide once, then stay decided for the rest of
+                            // the gesture: whichever measure crosses its slop
+                            // first is what the fingers were doing.
+                            if (!twoFingerClassified) {
+                                if (spread > PINCH_SLOP) {
+                                    twoFingerClassified = true
+                                    isPinch = true
+                                } else if (panTravelled > PAN_SLOP) {
+                                    twoFingerClassified = true
+                                }
+                            }
+
+                            if (twoFingerClassified) {
+                                twoFingerMoved = true
+                                if (isPinch) {
+                                    if (lastDistance > 0f) {
+                                        viewModel.pinchZoom(distance / lastDistance)
+                                    }
+                                } else {
+                                    viewModel.scroll(-dx * SCROLL_SPEED, -dy * SCROLL_SPEED)
+                                }
+                            }
+                            lastDistance = distance
                         } else if (pressedChanges.size == 1) {
                             val change = pressedChanges[0]
                             val delta = change.positionChange()

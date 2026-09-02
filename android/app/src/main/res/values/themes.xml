@@ -4,5 +4,11 @@
         <item name="android:statusBarColor">#000000</item>
         <item name="android:navigationBarColor">#000000</item>
         <item name="android:windowBackground">#000000</item>
+        <!-- WebView reads this to decide whether the app is in a dark theme,
+             which is what gates algorithmic darkening on targetSdk 33+. The
+             parent is already dark, but leaving it implicit means the answer
+             depends on which theme the WebView's context happens to resolve.
+             (Public since API 29; ignored below that.) -->
+        <item name="android:isLightTheme">false</item>
     </style>
 </resources>

@@ -1,7 +1,10 @@
 package com.anfaal.gamebrowser
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.net.Uri
 import android.webkit.WebView
 import androidx.compose.runtime.getValue
@@ -18,6 +21,29 @@ import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+
+/** Which glyph a toast shows, mirroring the SF Symbol names iOS passes to `toast(_:icon:)`. */
+enum class ToastIcon { SUCCESS, DOWNLOAD, COPY, TAB, WARNING }
+
+/** How long a burst of pad-layout edits is coalesced before it reaches disk. */
+private const val PROFILE_SAVE_DEBOUNCE_MS = 400L
+
+/** Turbo re-press interval, matching the iOS timer. */
+private const val TURBO_INTERVAL_MS = 90L
+
+/**
+ * Hold-to-scroll shape, matching ScrollRamp on iOS. A page can be twenty
+ * screens long, so a single speed is always wrong: slow enough to place
+ * yourself precisely is far too slow to get anywhere, and fast enough to
+ * travel overshoots every time. Holding ramps from one to the other, and
+ * releasing glides to a stop rather than stopping dead.
+ */
+private const val SCROLL_RAMP_START = 0.4f      // x scrollSpeed at the moment of press
+private const val SCROLL_RAMP_PEAK = 1.6f       // ... after SCROLL_RAMP_SECONDS held
+private const val SCROLL_RAMP_SECONDS = 1.2f
+private const val SCROLL_GLIDE_SECONDS = 0.35f
+private const val SCROLL_TICK_MS = 16L
+private const val SCROLL_MAX_STEP = 1f / 20f
 
 /** A key the virtual keyboard/joystick can send, mirroring InputBridge.Key on iOS. */
 data class GbKey(val key: String, val code: String, val keyCode: Int, val label: String) {
@@ -60,6 +86,713 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         // read — safe to call from here too (idempotent), so `loc()` works
         // correctly from the very first composition.
         Localization.init(appContext)
+    }
+
+    // MARK: - Error page
+
+    /**
+     * A failed load used to leave the tab on a blank black screen with no
+     * explanation and nothing to tap - indistinguishable from the app hanging.
+     * Show what went wrong, on the URL that failed, with a retry.
+     *
+     * Loading it with the failing URL as the base URL is the Android
+     * counterpart of iOS's `loadSimulatedRequest`: the URL bar still shows
+     * where the user was going and the retry link is a plain navigation to it.
+     */
+    fun showErrorPage(view: WebView, failingUrl: String, offline: Boolean, description: String) {
+        if (!failingUrl.startsWith("http")) return
+        view.loadDataWithBaseURL(
+            failingUrl,
+            errorPageHtml(failingUrl, offline, description),
+            "text/html",
+            "UTF-8",
+            failingUrl,
+        )
+    }
+
+    /** Dark error page styled like the start page - and like the iOS one. */
+    private fun errorPageHtml(url: String, offline: Boolean, description: String): String {
+        val title = if (offline) {
+            loc("インターネットに接続されていません", "You're offline")
+        } else {
+            loc("ページを開けませんでした", "This page didn't load")
+        }
+        val message = if (offline) {
+            loc(
+                "Wi-Fi またはモバイル通信を確認してから、もう一度お試しください。",
+                "Check your Wi-Fi or mobile connection, then try again.",
+            )
+        } else {
+            htmlEscape(description)
+        }
+        val href = htmlEscape(url)
+        val icon = if (offline) "\uD83D\uDCE1" else "\u26A0\uFE0F"
+        return """
+            <!DOCTYPE html><html><head>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+              body { background:#0b0f14; color:#e8edf2; font-family:sans-serif;
+                     min-height:100vh; display:flex; flex-direction:column; align-items:center;
+                     justify-content:center; text-align:center; padding:32px 24px; }
+              .icon { font-size:42px; margin-bottom:16px; }
+              h1 { font-size:20px; font-weight:700; }
+              .msg { color:#9aa7b4; font-size:14px; line-height:1.55; margin-top:10px; max-width:420px; }
+              .host { color:#5c6773; font-size:12px; margin-top:16px; max-width:420px;
+                      word-break:break-all; }
+              .retry { margin-top:26px; display:inline-block; text-decoration:none;
+                       color:#0b0f14; background:#39d3f5; font-size:14px; font-weight:600;
+                       padding:11px 26px; border-radius:11px; }
+              .retry:active { background:#2bb9d8; }
+            </style></head><body>
+            <div class="icon">$icon</div>
+            <h1>$title</h1>
+            <p class="msg">$message</p>
+            <p class="host">$href</p>
+            <a class="retry" href="$href">${loc("再試行", "Try again")}</a>
+            </body></html>
+        """.trimIndent()
+    }
+
+    // MARK: - Custom control pads
+
+    /**
+     * Saved layouts. Every game binds different keys, and the fixed on-screen
+     * keyboard can't reach most of them - so the user builds their own pad.
+     *
+     * Dragging a button rewrites this on every touch sample, and serialising
+     * every profile at 120Hz is not free, so writes are coalesced.
+     */
+    var profiles by mutableStateOf(ControlProfileStore.loadProfiles(prefs))
+        private set
+
+    private var saveProfilesJob: Job? = null
+
+    private fun applyProfiles(next: List<ControlProfile>) {
+        profiles = next
+        saveProfilesJob?.cancel()
+        saveProfilesJob = viewModelScope.launch {
+            delay(PROFILE_SAVE_DEBOUNCE_MS)
+            ControlProfileStore.saveProfiles(prefs, next)
+        }
+    }
+
+    /** Write immediately - the app may not get another chance. */
+    fun saveProfilesNow() {
+        saveProfilesJob?.cancel()
+        ControlProfileStore.saveProfiles(prefs, profiles)
+    }
+
+    var activeProfileId by mutableStateOf(ControlProfileStore.loadActive(prefs))
+        private set
+
+    /** Draw the active profile's buttons over the page. */
+    private var padVisibleBacking: Boolean by PersistedBoolean(prefs, "padVisible", false)
+    var padVisible: Boolean
+        get() = padVisibleBacking
+        set(value) {
+            padVisibleBacking = value
+            if (!value) {
+                releasePadButtons()
+                padEditing = false
+            }
+        }
+
+    /** Arrange mode: buttons are draggable and tapping one opens its settings. */
+    var padEditing by mutableStateOf(false)
+        private set
+
+    fun setPadEditMode(editing: Boolean) {
+        padEditing = editing
+        if (editing) releasePadButtons()
+    }
+
+    /** Buttons currently latched down (sticky). */
+    var padLatched by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    var selectedPadButton by mutableStateOf<String?>(null)
+    var showPadInspector by mutableStateOf(false)
+    var showProfiles by mutableStateOf(false)
+
+    /** host -> profile id, so a game's controls come back on their own. */
+    private var siteProfiles: Map<String, String> = ControlProfileStore.loadAssignments(prefs)
+
+    private val turboJobs = mutableMapOf<String, Job>()
+
+    val activeProfile: ControlProfile?
+        get() = profiles.firstOrNull { it.id == activeProfileId }
+
+    private fun updateProfile(mutate: (ControlProfile) -> ControlProfile) {
+        val id = activeProfileId ?: return
+        applyProfiles(profiles.map { if (it.id == id) mutate(it) else it })
+    }
+
+    fun activateProfile(id: String?) {
+        releasePadButtons()
+        activeProfileId = id
+        ControlProfileStore.saveActive(prefs, id)
+        selectedPadButton = null
+        activeProfile?.let { profile ->
+            joystickUsesArrows = profile.joystickArrows
+            if (profile.showJoystick) joystickVisible = true
+            padVisible = true
+        }
+        hapticSelection()
+    }
+
+    fun createProfile() {
+        val profile = ControlProfile(name = loc("新しいプロファイル", "New profile"))
+        applyProfiles(profiles + profile)
+        activateProfile(profile.id)
+    }
+
+    fun duplicateProfile(id: String) {
+        val source = profiles.firstOrNull { it.id == id } ?: return
+        val copy = source.copy(
+            id = UUID.randomUUID().toString(),
+            name = source.name + loc(" のコピー", " copy"),
+            // Fresh button ids, or the two profiles would share latch/turbo state.
+            buttons = source.buttons.map { it.copy(id = UUID.randomUUID().toString()) },
+        )
+        applyProfiles(profiles + copy)
+        activateProfile(copy.id)
+    }
+
+    fun deleteProfile(id: String) {
+        applyProfiles(profiles.filterNot { it.id == id })
+        siteProfiles = siteProfiles.filterValues { it != id }
+        ControlProfileStore.saveAssignments(prefs, siteProfiles)
+        if (activeProfileId == id) activateProfile(profiles.firstOrNull()?.id)
+    }
+
+    fun renameProfile(id: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        applyProfiles(profiles.map { if (it.id == id) it.copy(name = trimmed) else it })
+    }
+
+    fun addPresetProfiles() {
+        applyProfiles(profiles + ControlProfile.presets())
+        hapticMedium()
+    }
+
+    /** Per-profile tuning, from the profiles screen. */
+    fun updateActiveProfile(mutate: (ControlProfile) -> ControlProfile) = updateProfile(mutate)
+
+    // MARK: Buttons
+
+    fun addPadButton() {
+        if (activeProfileId == null) return
+        val new = PadButton(keys = listOf("Space"), x = 0.5f, y = 0.5f)
+        updateProfile { it.copy(buttons = it.buttons + new) }
+        selectedPadButton = new.id
+        showPadInspector = true
+        hapticLight()
+    }
+
+    fun movePadButton(id: String, x: Float, y: Float) {
+        updatePadButton(id) {
+            it.copy(x = x.coerceIn(0.04f, 0.96f), y = y.coerceIn(0.04f, 0.96f))
+        }
+    }
+
+    fun updatePadButton(id: String, mutate: (PadButton) -> PadButton) {
+        updateProfile { profile ->
+            profile.copy(buttons = profile.buttons.map { if (it.id == id) mutate(it) else it })
+        }
+    }
+
+    fun deletePadButton(id: String) {
+        releasePadButton(id)
+        updateProfile { profile -> profile.copy(buttons = profile.buttons.filterNot { it.id == id }) }
+        if (selectedPadButton == id) selectedPadButton = null
+    }
+
+    /** Several keys on one button are held together - Shift+W is sprint. */
+    fun addBinding(name: String, to: String) {
+        updatePadButton(to) { button ->
+            if (name in PadKeyName.mouseNames) {
+                button.copy(
+                    mouseButton = if (name == PadKeyName.RIGHT_CLICK) 2 else 0,
+                    keys = emptyList(),
+                )
+            } else {
+                button.copy(
+                    mouseButton = null,
+                    keys = if (name in button.keys) button.keys else button.keys + name,
+                )
+            }
+        }
+        hapticLight()
+    }
+
+    fun removeBinding(name: String, from: String) {
+        updatePadButton(from) { button ->
+            if (name in PadKeyName.mouseNames) {
+                button.copy(mouseButton = null)
+            } else {
+                button.copy(keys = button.keys.filterNot { it == name })
+            }
+        }
+    }
+
+    // MARK: Per-site assignment
+
+    fun siteProfileId(host: String): String? = siteProfiles[host]
+
+    fun siteProfileName(host: String): String? {
+        val id = siteProfileId(host) ?: return null
+        return profiles.firstOrNull { it.id == id }?.name
+    }
+
+    fun assignCurrentProfileToSite(pinned: Boolean) {
+        val host = try {
+            currentUrl?.let { Uri.parse(it).host }
+        } catch (e: Exception) {
+            null
+        } ?: return
+        val id = activeProfileId
+        siteProfiles = if (pinned && id != null) {
+            siteProfiles + (host to id)
+        } else {
+            siteProfiles - host
+        }
+        ControlProfileStore.saveAssignments(prefs, siteProfiles)
+        hapticLight()
+    }
+
+    /** Bring back the profile pinned to this site, if it isn't already on. */
+    fun applySiteProfile(url: String?) {
+        val host = try {
+            url?.let { Uri.parse(it).host }
+        } catch (e: Exception) {
+            null
+        } ?: return
+        val id = siteProfileId(host) ?: return
+        if (id == activeProfileId) return
+        if (profiles.none { it.id == id }) return
+        activateProfile(id)
+    }
+
+    // MARK: Physical controller mapping
+
+    fun gamepadBinding(slot: GamepadSlot): String =
+        activeProfile?.gamepadKey(slot) ?: slot.defaultKey
+
+    fun setGamepadBinding(slot: GamepadSlot, name: String) {
+        updateProfile { it.copy(gamepadMap = it.gamepadMap + (slot.name to name)) }
+        hapticLight()
+    }
+
+    fun resetGamepadMapping() {
+        updateProfile { it.copy(gamepadMap = emptyMap()) }
+        hapticLight()
+    }
+
+    /** The profile's own cursor speed, or the global one when it has none. */
+    val effectiveSensitivity: Float
+        get() = activeProfile?.cursorSensitivity ?: cursorSensitivity
+
+    // MARK: Per-profile tuning
+
+    fun setProfileSensitivity(value: Float?) {
+        updateProfile { it.copy(cursorSensitivity = value) }
+    }
+
+    fun setPadOpacity(value: Float) {
+        updateProfile { it.copy(padOpacity = value) }
+    }
+
+    fun setAutoFocusGame(on: Boolean) {
+        updateProfile { it.copy(autoFocusGame = on) }
+        hapticLight()
+    }
+
+    /**
+     * Back to the values a new profile starts with - the buttons themselves and
+     * the controller mapping are left alone.
+     */
+    fun resetProfileTuning() {
+        val fresh = ControlProfile(name = "")
+        updateProfile {
+            it.copy(
+                padOpacity = fresh.padOpacity,
+                cursorSensitivity = fresh.cursorSensitivity,
+                autoFocusGame = fresh.autoFocusGame,
+            )
+        }
+        hapticMedium()
+    }
+
+    /** A layout as JSON, so it can be shared or kept somewhere that survives a reinstall. */
+    fun copyActiveProfile(): Boolean {
+        val profile = activeProfile ?: return false
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return false
+        clipboard.setPrimaryClip(ClipData.newPlainText("GameBrowser profile", profile.toJson().toString()))
+        hapticMedium()
+        return true
+    }
+
+    fun pasteProfile(): Boolean {
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return false
+        val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(appContext)?.toString()
+            ?: return false
+        val parsed = try {
+            ControlProfile.fromJson(org.json.JSONObject(text))
+        } catch (e: Exception) {
+            return false
+        }
+        if (parsed.buttons.isEmpty() && parsed.gamepadMap.isEmpty()) return false
+        // Fresh ids so pasting the same layout twice gives two profiles rather
+        // than two things claiming to be the same one.
+        val profile = parsed.copy(
+            id = UUID.randomUUID().toString(),
+            buttons = parsed.buttons.map { it.copy(id = UUID.randomUUID().toString()) },
+        )
+        applyProfiles(profiles + profile)
+        activateProfile(profile.id)
+        hapticMedium()
+        return true
+    }
+
+    // MARK: Sending
+
+    fun padPress(button: PadButton) {
+        hapticLight()
+        if (button.sticky) {
+            if (button.id in padLatched) {
+                releasePadButton(button.id)
+            } else {
+                padLatched = padLatched + button.id
+                engage(button)
+                if (button.turbo) startTurbo(button)
+            }
+            return
+        }
+        engage(button)
+        if (button.turbo) startTurbo(button)
+    }
+
+    fun padRelease(button: PadButton) {
+        if (button.sticky) return   // a latched button waits for the next tap
+        stopTurbo(button.id)
+        disengage(button)
+    }
+
+    private fun engage(button: PadButton) {
+        val mouse = button.mouseButton
+        if (mouse != null) {
+            mouseDown(mouse)
+            return
+        }
+        for (name in button.keys) KeyCatalog.key(name)?.let { keyDown(it) }
+    }
+
+    private fun disengage(button: PadButton) {
+        val mouse = button.mouseButton
+        if (mouse != null) {
+            mouseUp(mouse)
+            return
+        }
+        // Reverse order so a modifier in a combo is released last.
+        for (name in button.keys.reversed()) KeyCatalog.key(name)?.let { keyUp(it) }
+    }
+
+    /** Turbo: re-press on an interval for games that expect mashing. */
+    private fun startTurbo(button: PadButton) {
+        stopTurbo(button.id)
+        turboJobs[button.id] = viewModelScope.launch {
+            while (true) {
+                delay(TURBO_INTERVAL_MS)
+                disengage(button)
+                engage(button)
+            }
+        }
+    }
+
+    private fun stopTurbo(id: String) {
+        turboJobs.remove(id)?.cancel()
+    }
+
+    private fun releasePadButton(id: String) {
+        stopTurbo(id)
+        padLatched = padLatched - id
+        activeProfile?.buttons?.firstOrNull { it.id == id }?.let { disengage(it) }
+    }
+
+    /**
+     * Drop everything the pads are holding - hiding them, editing, switching
+     * tabs or profiles must never leave a key or mouse button stuck down.
+     */
+    fun releasePadButtons() {
+        turboJobs.values.forEach { it.cancel() }
+        turboJobs.clear()
+        val latched = padLatched
+        padLatched = emptySet()
+        val profile = activeProfile ?: return
+        profile.buttons.filter { it.id in latched }.forEach { disengage(it) }
+    }
+
+    // MARK: - Resetting settings
+
+    /** One settings card's worth of options. Mirrors iOS's SettingsSection. */
+    enum class SettingsSection {
+        BROWSER_MODE, CONTROLS, SEARCH_TABS, APPEARANCE, AUTOFILL,
+        SECURITY, PERMISSIONS, HIGHLIGHTS, BACKGROUND,
+    }
+
+    /**
+     * Put one section back to its factory values, with feedback.
+     *
+     * Browsing data is deliberately left alone - bookmarks, history, saved
+     * passwords and cards, open tabs and downloads all survive. This resets
+     * settings, not the user's own stuff.
+     */
+    fun resetSettings(section: SettingsSection) {
+        applyDefaults(section)
+        hapticMedium()
+    }
+
+    fun resetAllSettings() {
+        for (section in SettingsSection.entries) applyDefaults(section)
+        hapticMedium()
+    }
+
+    private fun applyDefaults(section: SettingsSection) {
+        when (section) {
+            SettingsSection.BROWSER_MODE -> {
+                pcMode = Default.pcMode
+                desktopMode = Default.desktopMode
+            }
+            SettingsSection.CONTROLS -> {
+                controlScheme = Default.controlScheme
+                cursorSensitivity = Default.cursorSensitivity
+                scrollSpeed = Default.scrollSpeed
+                hapticsEnabled = Default.hapticsEnabled
+                showFps = Default.showFps
+                joystickUsesArrows = Default.joystickUsesArrows
+                resetJoystickPosition()
+            }
+            SettingsSection.SEARCH_TABS -> {
+                searchEngine = Default.searchEngine
+                newTabPage = Default.newTabPage
+            }
+            SettingsSection.APPEARANCE -> {
+                appTheme = Default.appTheme
+                appLanguage = Default.appLanguage
+                toolbarOnBottom = Default.toolbarOnBottom
+                showScrollButtons = Default.showScrollButtons
+                desktopMode = pcMode   // its factory value is "match the mode"
+            }
+            SettingsSection.AUTOFILL -> {
+                autofillEnabled = Default.autofillEnabled
+            }
+            SettingsSection.SECURITY -> {
+                adBlockEnabled = Default.adBlockEnabled
+                useFullAdList = Default.useFullAdList
+                trackingLevel = Default.trackingLevel
+                appLockEnabled = Default.appLockEnabled
+                fraudWarning = Default.fraudWarning
+                httpsOnly = Default.httpsOnly
+                blockPopups = Default.blockPopups
+                javaScriptEnabled = Default.javaScriptEnabled
+            }
+            SettingsSection.PERMISSIONS -> {
+                capturePolicy = Default.capturePolicy
+                webNotificationsEnabled = Default.webNotificationsEnabled
+            }
+            SettingsSection.HIGHLIGHTS -> {
+                highlightsEnabled = Default.highlightsEnabled
+            }
+            SettingsSection.BACKGROUND -> {
+                keepAliveInBackground = Default.keepAliveInBackground
+            }
+        }
+    }
+
+    // MARK: - Downloads
+
+    /**
+     * Downloads live here rather than in the tab, so they survive the tab that
+     * started them - same as the iOS view model's `downloads`.
+     */
+    val downloads = DownloadManager(appContext).also { manager ->
+        manager.onFinished = { name ->
+            toast(loc("ダウンロード完了: $name", "Downloaded: $name"), ToastIcon.DOWNLOAD)
+        }
+    }
+
+    var showDownloads by mutableStateOf(false)
+
+    /** How many downloads are running, for the badge on the toolbar menu. */
+    val activeDownloads: Int get() = downloads.activeCount
+
+    /**
+     * Download a URL directly - from the link menu, or because the WebView
+     * handed us something it cannot display.
+     */
+    fun startDownload(
+        url: String,
+        userAgent: String? = null,
+        contentDisposition: String? = null,
+        mimeType: String? = null,
+        contentLength: Long = 0,
+    ) {
+        val started = downloads.start(
+            url = url,
+            userAgent = userAgent,
+            contentDisposition = contentDisposition,
+            mimeType = mimeType,
+            contentLength = contentLength,
+            referer = currentUrl,
+            cookie = tabManager.cookieHeader(url),
+        )
+        if (started) {
+            toast(loc("ダウンロードを開始しました", "Download started"), ToastIcon.DOWNLOAD)
+        } else {
+            // blob:/data: URLs and the like: the download service cannot fetch
+            // them, and saying so beats appearing to do nothing.
+            toast(loc("このリンクはダウンロードできません", "This link can't be downloaded"),
+                  ToastIcon.WARNING)
+        }
+    }
+
+    // MARK: - Toasts
+
+    /**
+     * Brief confirmation for things that otherwise happen invisibly - a
+     * finished download, a copied link, a profile switching itself on.
+     * Mirrors BrowserViewModel.swift's `toast(_:icon:)`.
+     */
+    var toastText by mutableStateOf<String?>(null)
+        private set
+    var toastIcon by mutableStateOf(ToastIcon.SUCCESS)
+        private set
+    private var toastJob: Job? = null
+
+    fun toast(text: String, icon: ToastIcon = ToastIcon.SUCCESS) {
+        toastText = text
+        toastIcon = icon
+        toastJob?.cancel()
+        toastJob = viewModelScope.launch {
+            delay(2400)
+            toastText = null
+        }
+    }
+
+    // MARK: - Link under the cursor (right-click menu)
+
+    /**
+     * Link the page reported under the pointer on a right-click, so the app can
+     * offer a real menu - WebView's own long-press menu never appears in cursor
+     * mode, because the trackpad overlay takes the touches.
+     */
+    data class LinkTarget(val url: String, val text: String)
+
+    var linkTarget by mutableStateOf<LinkTarget?>(null)
+
+    fun openLinkInNewTab() {
+        val target = linkTarget ?: return
+        // A link opened out of a private tab stays private.
+        tabManager.newTab(target.url, isPrivate = isPrivateTab)
+        toast(loc("新しいタブで開きました", "Opened in a new tab"), ToastIcon.TAB)
+        linkTarget = null
+    }
+
+    fun downloadLink() {
+        val target = linkTarget ?: return
+        startDownload(target.url)
+        linkTarget = null
+    }
+
+    fun copyLink() {
+        val target = linkTarget ?: return
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText("URL", target.url))
+        toast(loc("リンクをコピーしました", "Link copied"), ToastIcon.COPY)
+        linkTarget = null
+    }
+
+    // MARK: - Focus the game / FPS meter
+
+    /** True while the page's game element is blown up to fill the screen. */
+    var gameFocused by mutableStateOf(false)
+        private set
+
+    /** Frames per second reported by the page's own animation loop. */
+    var fps by mutableStateOf(0)
+        private set
+
+    private var showFpsBacking: Boolean by PersistedBoolean(prefs, "showFPS", Default.showFps)
+    var showFps: Boolean
+        get() = showFpsBacking
+        set(value) {
+            showFpsBacking = value
+            if (!value) fps = 0
+            applyFpsMeter()
+        }
+
+    fun applyFpsMeter() {
+        webView?.evaluateJavascript("window.__gb && __gb.setFpsMeter($showFps)", null)
+    }
+
+    fun handleFpsReport(value: Int) {
+        if (showFps) fps = value
+    }
+
+    /**
+     * Fill the screen with the game itself. Most browser-game pages wrap a
+     * small canvas or iframe in ads and site chrome; this promotes that one
+     * element and hides everything around it. Pressing again restores it.
+     */
+    fun toggleGameFocus() {
+        val view = webView ?: return
+        val focusing = !gameFocused
+        val js = if (focusing) "window.__gb && __gb.focusGame()" else "window.__gb && __gb.unfocusGame()"
+        view.evaluateJavascript(js) { result ->
+            val succeeded = result == "true"
+            if (focusing) {
+                // Nothing game-shaped on the page - say so by staying put
+                // rather than silently pretending it worked.
+                gameFocused = succeeded
+                if (succeeded) {
+                    immersive = true
+                    hapticMedium()
+                } else {
+                    toast(loc("全画面にできる要素が見つかりません", "Nothing to fullscreen on this page"),
+                          ToastIcon.WARNING)
+                }
+            } else {
+                gameFocused = false
+                hapticLight()
+            }
+        }
+    }
+
+    /**
+     * Pinch-to-zoom in cursor mode. The trackpad overlay takes every touch
+     * there, so the WebView never sees the pinch itself and pages simply could
+     * not be zoomed; [factor] is the frame's change in finger separation.
+     */
+    fun pinchZoom(factor: Float) {
+        val view = webView ?: return
+        if (factor.isNaN() || factor <= 0f) return
+        view.zoomBy(factor.coerceIn(0.01f, 100f))
+    }
+
+    /** Back to the zoom the page opened at, after a pinch. */
+    fun resetZoom() {
+        val tab = tabManager.activeTab ?: return
+        if (tab.pageScale <= 0f || tab.initialScale <= 0f) return
+        tab.webView.zoomBy((tab.initialScale / tab.pageScale).coerceIn(0.01f, 100f))
+    }
+
+    /** A navigation drops whatever the previous page had focused. */
+    fun clearGameFocus() {
+        gameFocused = false
     }
 
     // MARK: - Core virtual mouse/keyboard state
@@ -112,7 +845,44 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * class of circular-initialization hazard `tabManager`'s own doc comment
      * below describes for `webView`.
      */
-    var newTabPage: NewTabPage by PersistedEnum(prefs, "newTabPage", NewTabPage.entries.toTypedArray(), NewTabPage.HOME)
+    /**
+     * Factory values for every setting. Launch and reset both read these, so
+     * the two cannot drift - previously every default was a literal spelled
+     * out at its point of use, and a reset written against those would have
+     * been a second copy to keep in sync. Mirrors BrowserViewModel.Default on
+     * iOS, value for value.
+     */
+    object Default {
+        const val pcMode = false            // phone mode on a fresh install
+        const val desktopMode = false
+        const val cursorSensitivity = 1.4f
+        const val scrollSpeed = 700f
+        val controlScheme = ControlScheme.CLASSIC
+        const val hapticsEnabled = true
+        const val showFps = false
+        const val joystickUsesArrows = false
+        const val showScrollButtons = true
+        const val appLanguage = 0           // follow the system
+        const val appTheme = 0              // dark
+        const val toolbarOnBottom = false
+        val searchEngine = SearchEngine.GOOGLE
+        val newTabPage = NewTabPage.HOME
+        const val autofillEnabled = true
+        const val adBlockEnabled = true
+        const val useFullAdList = false
+        val trackingLevel = TrackerBlocker.BALANCED
+        const val appLockEnabled = false
+        const val fraudWarning = true
+        const val httpsOnly = true
+        const val blockPopups = false
+        const val javaScriptEnabled = true
+        val capturePolicy = CapturePolicy.ASK
+        const val webNotificationsEnabled = true
+        const val highlightsEnabled = false
+        const val keepAliveInBackground = false
+    }
+
+    var newTabPage: NewTabPage by PersistedEnum(prefs, "newTabPage", NewTabPage.entries.toTypedArray(), Default.newTabPage)
 
     private var bookmarksBacking: List<Bookmark> by mutableStateOf(loadBookmarks())
     var bookmarks: List<Bookmark>
@@ -121,6 +891,73 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             bookmarksBacking = value
             saveBookmarksToPrefs(value)
         }
+
+    /**
+     * Declared before [tabManager] for the same reason as [newTabPage]:
+     * `TabManager.configureWebView` reads it to pick each tab's user agent,
+     * and on a fresh install that runs synchronously from `TabManager.start()`
+     * inside this class's own construction — reading it after `tabManager`
+     * would hit an unconstructed `PersistedBoolean` delegate and crash on the
+     * very first launch.
+     */
+    private var desktopModeBacking: Boolean by PersistedBoolean(prefs, "desktopMode", Default.desktopMode)
+    var desktopMode: Boolean
+        get() = desktopModeBacking
+        set(value) {
+            desktopModeBacking = value
+            // Reloading alone changed nothing: the user agent was pinned to
+            // the desktop one for every tab regardless, and the page's own
+            // viewport meta kept the layout at device width.
+            tabManager.applyContentMode()
+            applyViewportMode()
+        }
+
+    /**
+     * 0 dark, 1 light, 2 follow the system.
+     *
+     * Declared before [tabManager] for the same reason as [desktopMode]:
+     * `TabManager.configureWebView` reads [wantsDarkPages] to set each tab's
+     * dark rendering *before* that tab's first load, and on a fresh install
+     * that runs synchronously from `TabManager.start()` inside this class's
+     * own construction.
+     */
+    private var appThemeBacking: Int by PersistedInt(prefs, "appTheme", Default.appTheme)
+    var appTheme: Int
+        get() = appThemeBacking
+        set(value) {
+            appThemeBacking = value
+            tabManager.applyDarkMode()
+        }
+
+    /**
+     * Whether web pages should be rendered dark.
+     *
+     * This used to be read by nothing at all: the setting was stored and then
+     * ignored, so whether a page came out dark was left to whatever the
+     * WebView inferred from the app's theme once it was attached to a window.
+     * The first page of a cold start loads before that happens - `start()`
+     * calls `loadUrl` from this class's constructor, long before the view
+     * tree exists - so it rendered light, and only a later navigation (which
+     * is what switching to PC mode forces) came out dark.
+     */
+    val wantsDarkPages: Boolean
+        get() = when (appTheme) {
+            1 -> false
+            2 -> (appContext.resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            else -> true
+        }
+
+    /**
+     * Which viewport override the pages should be running, mirroring
+     * BrowserViewModel.swift. `desktop` is what actually produces a PC-shaped
+     * layout on a page that pins itself to the device width.
+     */
+    val viewportMode: String get() = if (desktopMode) "desktop" else "zoom"
+
+    fun applyViewportMode() {
+        webView?.evaluateJavascript("window.__gb && __gb.setViewportMode('$viewportMode')", null)
+    }
 
     /**
      * Owns every tab's WebView + persistence; see TabManager.kt.
@@ -146,7 +983,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     // MARK: - Settings (persisted)
 
-    private var pcModeBacking: Boolean by PersistedBoolean(prefs, "pcMode", false)
+    private var pcModeBacking: Boolean by PersistedBoolean(prefs, "pcMode", Default.pcMode)
 
     /** App-level mode: phone = plain touch browser without the control bar, PC = gaming browser with virtual mouse tools + desktop UA. Mirrors BrowserViewModel.swift's `pcMode` didSet. */
     var pcMode: Boolean
@@ -164,26 +1001,25 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
             if (desktopMode != value) desktopMode = value
         }
-    var controlScheme: ControlScheme by PersistedEnum(prefs, "controlScheme", ControlScheme.entries.toTypedArray(), ControlScheme.CLASSIC)
-    var cursorSensitivity: Float by PersistedFloat(prefs, "cursorSensitivity", 1.4f)
-    var scrollSpeed: Float by PersistedFloat(prefs, "scrollSpeed", 700f)
-    var hapticsEnabled: Boolean by PersistedBoolean(prefs, "hapticsEnabled", true)
-    var joystickUsesArrows: Boolean by PersistedBoolean(prefs, "joystickUsesArrows", false)
-    var searchEngine: SearchEngine by PersistedEnum(prefs, "searchEngine", SearchEngine.entries.toTypedArray(), SearchEngine.GOOGLE)
+    var controlScheme: ControlScheme by PersistedEnum(prefs, "controlScheme", ControlScheme.entries.toTypedArray(), Default.controlScheme)
+    var cursorSensitivity: Float by PersistedFloat(prefs, "cursorSensitivity", Default.cursorSensitivity)
+    var scrollSpeed: Float by PersistedFloat(prefs, "scrollSpeed", Default.scrollSpeed)
+    var hapticsEnabled: Boolean by PersistedBoolean(prefs, "hapticsEnabled", Default.hapticsEnabled)
+    var joystickUsesArrows: Boolean by PersistedBoolean(prefs, "joystickUsesArrows", Default.joystickUsesArrows)
+    var searchEngine: SearchEngine by PersistedEnum(prefs, "searchEngine", SearchEngine.entries.toTypedArray(), Default.searchEngine)
     // newTabPage is declared above, before `tabManager` — see its doc comment.
-    var appTheme: Int by PersistedInt(prefs, "appTheme", 0)
-    var appLanguage: Int by PersistedInt(prefs, "appLanguage", 0)
-    var toolbarOnBottom: Boolean by PersistedBoolean(prefs, "toolbarOnBottom", false)
-    var showScrollButtons: Boolean by PersistedBoolean(prefs, "showScrollButtons", true)
-    var autofillEnabled: Boolean by PersistedBoolean(prefs, "autofillEnabled", true)
-    var appLockEnabled: Boolean by PersistedBoolean(prefs, "appLockEnabled", false)
-    var fraudWarning: Boolean by PersistedBoolean(prefs, "fraudWarning", true)
-    var httpsOnly: Boolean by PersistedBoolean(prefs, "httpsOnly", true)
-    var blockPopups: Boolean by PersistedBoolean(prefs, "blockPopups", false)
-    var javaScriptEnabled: Boolean by PersistedBoolean(prefs, "javaScriptEnabled", true)
-    var capturePolicy: CapturePolicy by PersistedEnum(prefs, "capturePolicy", CapturePolicy.entries.toTypedArray(), CapturePolicy.ASK)
-    var webNotificationsEnabled: Boolean by PersistedBoolean(prefs, "webNotificationsEnabled", true)
-    private var highlightsEnabledBacking: Boolean by PersistedBoolean(prefs, "highlightsEnabled", false)
+    var appLanguage: Int by PersistedInt(prefs, "appLanguage", Default.appLanguage)
+    var toolbarOnBottom: Boolean by PersistedBoolean(prefs, "toolbarOnBottom", Default.toolbarOnBottom)
+    var showScrollButtons: Boolean by PersistedBoolean(prefs, "showScrollButtons", Default.showScrollButtons)
+    var autofillEnabled: Boolean by PersistedBoolean(prefs, "autofillEnabled", Default.autofillEnabled)
+    var appLockEnabled: Boolean by PersistedBoolean(prefs, "appLockEnabled", Default.appLockEnabled)
+    var fraudWarning: Boolean by PersistedBoolean(prefs, "fraudWarning", Default.fraudWarning)
+    var httpsOnly: Boolean by PersistedBoolean(prefs, "httpsOnly", Default.httpsOnly)
+    var blockPopups: Boolean by PersistedBoolean(prefs, "blockPopups", Default.blockPopups)
+    var javaScriptEnabled: Boolean by PersistedBoolean(prefs, "javaScriptEnabled", Default.javaScriptEnabled)
+    var capturePolicy: CapturePolicy by PersistedEnum(prefs, "capturePolicy", CapturePolicy.entries.toTypedArray(), Default.capturePolicy)
+    var webNotificationsEnabled: Boolean by PersistedBoolean(prefs, "webNotificationsEnabled", Default.webNotificationsEnabled)
+    private var highlightsEnabledBacking: Boolean by PersistedBoolean(prefs, "highlightsEnabled", Default.highlightsEnabled)
     var highlightsEnabled: Boolean
         get() = highlightsEnabledBacking
         set(value) {
@@ -209,15 +1045,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private var desktopModeBacking: Boolean by PersistedBoolean(prefs, "desktopMode", false)
-    var desktopMode: Boolean
-        get() = desktopModeBacking
-        set(value) {
-            desktopModeBacking = value
-            webView?.reload()
-        }
-
-    private var adBlockEnabledBacking: Boolean by PersistedBoolean(prefs, "adBlockEnabled", true)
+    private var adBlockEnabledBacking: Boolean by PersistedBoolean(prefs, "adBlockEnabled", Default.adBlockEnabled)
     var adBlockEnabled: Boolean
         get() = adBlockEnabledBacking
         set(value) {
@@ -225,7 +1053,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             webView?.reload()
         }
 
-    private var useFullAdListBacking: Boolean by PersistedBoolean(prefs, "useFullAdList", false)
+    private var useFullAdListBacking: Boolean by PersistedBoolean(prefs, "useFullAdList", Default.useFullAdList)
     var useFullAdList: Boolean
         get() = useFullAdListBacking
         set(value) {
@@ -234,13 +1062,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             webView?.reload()
         }
 
-    var trackingLevel: Int by PersistedInt(prefs, "trackingLevel", TrackerBlocker.BALANCED)
+    var trackingLevel: Int by PersistedInt(prefs, "trackingLevel", Default.trackingLevel)
 
     /** Runtime lock state (not itself persisted — reset to appLockEnabled's
      *  value at process start, same as ContentView's `@State isLocked` init). */
     var isLocked by mutableStateOf(false)
 
-    private var keepAliveBacking: Boolean by PersistedBoolean(prefs, "keepAliveInBackground", false)
+    private var keepAliveBacking: Boolean by PersistedBoolean(prefs, "keepAliveInBackground", Default.keepAliveInBackground)
     var keepAliveInBackground: Boolean
         get() = keepAliveBacking
         set(value) {
@@ -251,6 +1079,19 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun resetJoystickPosition() {
         // Placeholder hook for a future joystick-position setting; the
         // Compose joystick (not yet ported) will read/write its own offset.
+    }
+
+    /** True while the tab on screen is a private one. */
+    val isPrivateTab: Boolean
+        get() = tabManager.activeTab?.isPrivate == true
+
+    /** How many private tabs are open, for the badge in the tab switcher. */
+    val privateTabCount: Int
+        get() = tabManager.tabs.count { it.isPrivate }
+
+    /** Opens a new private tab and switches to it. */
+    fun newPrivateTab() {
+        tabManager.newTab(isPrivate = true)
     }
 
     fun goHome() {
@@ -319,7 +1160,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun handleCredentialSubmitted(username: String, password: String) {
-        if (!autofillEnabled || password.isEmpty() || currentHost.isEmpty()) return
+        // A private tab never offers to save what was typed into it.
+        if (!autofillEnabled || isPrivateTab || password.isEmpty() || currentHost.isEmpty()) return
         val alreadySaved = credentials.any {
             it.domain == currentHost && it.username == username && it.password == password
         }
@@ -446,6 +1288,31 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             </a>
             """.trimIndent()
         }
+        // Recently visited sites, newest first and one entry per host, so the
+        // game you were playing yesterday is one tap away.
+        val seenHosts = mutableSetOf<String>()
+        val recents = history.asReversed().mapNotNull { entry ->
+            val host = try { Uri.parse(entry.url).host } catch (e: Exception) { null }
+            if (host.isNullOrEmpty() || host in seenHosts) return@mapNotNull null
+            if (bookmarks.any { it.url == entry.url }) return@mapNotNull null
+            seenHosts.add(host)
+            """
+            <a class="chip" href="${htmlEscape(entry.url)}">
+              <img src="https://www.google.com/s2/favicons?domain=${htmlEscape(host)}&sz=32" onerror="this.remove()" alt="">
+              <span>${htmlEscape(host)}</span>
+            </a>
+            """.trimIndent()
+        }.take(8).joinToString("")
+
+        val recentSection = if (recents.isEmpty()) {
+            ""
+        } else {
+            """
+            <div class="section">${loc("最近開いたサイト", "Recently visited")}</div>
+            <div class="chips">$recents</div>
+            """.trimIndent()
+        }
+
         return """
         <!DOCTYPE html><html><head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -470,10 +1337,20 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
           .icon img { width:28px; height:28px; position:absolute; }
           .name { font-size:12px; max-width:100%; overflow:hidden;
                   text-overflow:ellipsis; white-space:nowrap; }
+          .section { width:100%; max-width:560px; margin:30px 0 12px; font-size:12px;
+                     font-weight:600; letter-spacing:.4px; color:#7b8794; }
+          .chips { display:flex; flex-wrap:wrap; gap:8px; width:100%; max-width:560px; }
+          .chip { display:flex; align-items:center; gap:7px; padding:8px 12px;
+                  border-radius:999px; background:#141b23; border:1px solid #1f2937;
+                  text-decoration:none; color:#c7d2dd; font-size:12px; max-width:100%; }
+          .chip:active { background:#1d2733; }
+          .chip img { width:16px; height:16px; border-radius:4px; }
+          .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         </style></head><body>
         <h1>GameBrowser</h1>
         <p class="sub">${loc("ブックマークから開く、または上のバーで検索", "Open a bookmark, or search using the bar above")}</p>
         <div class="grid">$tiles</div>
+        $recentSection
         </body></html>
         """.trimIndent()
     }
@@ -576,24 +1453,82 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     /** Fullscreen/immersive presentation: hides the toolbar and system bars (wired in MainActivity). */
     var immersive by mutableStateOf(false)
 
+    /**
+     * True while a physical game controller is attached (maintained by
+     * [GamepadInput]). Controller input never touches the screen, so without
+     * this the display dims and locks in the middle of a game -- MainActivity
+     * holds FLAG_KEEP_SCREEN_ON while this or [immersive] is set.
+     */
+    var gamepadConnected by mutableStateOf(false)
+
     private var scrollJob: Job? = null
     private var scrollDirection: Float = 0f
+    private var scrollHeldSinceNanos: Long = 0L
+    private var scrollReleasedAtNanos: Long = 0L
 
-    /** Starts a smooth repeating scroll in [direction] (-1 up, 1 down) at [scrollSpeed] px/s, for the scroll-button strip. */
+    /**
+     * Current speed as a multiple of [scrollSpeed], carried across a release so
+     * the glide starts from whatever the hold had reached.
+     */
+    private var scrollMultiplier: Float = 0f
+
+    /** Start (or resume) a held scroll in [direction] (+1 down / -1 up). */
     fun startSmoothScroll(direction: Float) {
+        val now = System.nanoTime()
+        // Pressing again mid-glide picks the ramp back up where the speed
+        // currently is, so repeated taps read as one continuous scroll rather
+        // than restarting from a crawl each time.
+        val resumed = ((scrollMultiplier - SCROLL_RAMP_START) /
+            (SCROLL_RAMP_PEAK - SCROLL_RAMP_START)).coerceIn(0f, 1f) * SCROLL_RAMP_SECONDS
+        scrollHeldSinceNanos = now - (resumed * 1_000_000_000f).toLong()
+        scrollReleasedAtNanos = 0L
         scrollDirection = direction
         if (scrollJob != null) return
         scrollJob = viewModelScope.launch {
+            var lastTick = System.nanoTime()
             while (true) {
-                scroll(0f, scrollDirection * scrollSpeed / 60f)
-                delay(16)
+                delay(SCROLL_TICK_MS)
+                val tick = System.nanoTime()
+                // Real elapsed time, not the nominal delay: a frame that took
+                // longer must still move the page the distance it owes, and a
+                // stalled main thread must not teleport it on the next tick.
+                val step = ((tick - lastTick) / 1_000_000_000.0)
+                    .coerceAtMost(SCROLL_MAX_STEP.toDouble()).toFloat()
+                lastTick = tick
+
+                val released = scrollReleasedAtNanos
+                if (released != 0L) {
+                    val progress = (tick - released) / (SCROLL_GLIDE_SECONDS * 1_000_000_000f)
+                    if (progress >= 1f) break
+                    // Ease out, so the last few frames barely move.
+                    scrollMultiplier *= (1f - progress) * (1f - progress)
+                } else {
+                    val held = (tick - scrollHeldSinceNanos) / 1_000_000_000f
+                    val progress = (held / SCROLL_RAMP_SECONDS).coerceIn(0f, 1f)
+                    scrollMultiplier = SCROLL_RAMP_START +
+                        (SCROLL_RAMP_PEAK - SCROLL_RAMP_START) * progress
+                }
+                scroll(0f, scrollDirection * scrollSpeed * scrollMultiplier * step)
             }
+            stopSmoothScroll()
         }
     }
 
+    /** Let go: coast to a stop instead of stopping mid-motion. */
     fun endSmoothScroll() {
-        scrollJob?.cancel()
+        if (scrollJob == null || scrollReleasedAtNanos != 0L) return
+        scrollReleasedAtNanos = System.nanoTime()
+    }
+
+    /**
+     * Clears the state once the glide has run out. Called from inside the job
+     * itself, so it must not cancel it - the loop has already left.
+     */
+    private fun stopSmoothScroll() {
         scrollJob = null
+        scrollReleasedAtNanos = 0L
+        scrollHeldSinceNanos = 0L
+        scrollMultiplier = 0f
     }
 
     // MARK: - Built-in romaji IME
@@ -703,8 +1638,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun moveCursor(dxRaw: Float, dyRaw: Float) {
         val speed = hypot(dxRaw.toDouble(), dyRaw.toDouble()).toFloat()
         val accel = min(2.2f, 0.7f + speed / 9f)
-        val dx = dxRaw * cursorSensitivity * accel
-        val dy = dyRaw * cursorSensitivity * accel
+        val dx = dxRaw * effectiveSensitivity * accel
+        val dy = dyRaw * effectiveSensitivity * accel
         cursorPosition = clamp(Pair(cursorPosition.first + dx, cursorPosition.second + dy))
         js("window.__gb && __gb.move(${f(cursorPosition.first)}, ${f(cursorPosition.second)}, ${f(dx)}, ${f(dy)})")
     }
@@ -829,6 +1764,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     override fun onCleared() {
         tabManager.dispose()
+        downloads.dispose()
         super.onCleared()
     }
 }
