@@ -153,7 +153,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     private var saveProfilesJob: Job? = null
 
-    private fun setProfiles(next: List<ControlProfile>) {
+    private fun applyProfiles(next: List<ControlProfile>) {
         profiles = next
         saveProfilesJob?.cancel()
         saveProfilesJob = viewModelScope.launch {
@@ -187,7 +187,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     var padEditing by mutableStateOf(false)
         private set
 
-    fun setPadEditing(editing: Boolean) {
+    fun setPadEditMode(editing: Boolean) {
         padEditing = editing
         if (editing) releasePadButtons()
     }
@@ -210,7 +210,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     private fun updateProfile(mutate: (ControlProfile) -> ControlProfile) {
         val id = activeProfileId ?: return
-        setProfiles(profiles.map { if (it.id == id) mutate(it) else it })
+        applyProfiles(profiles.map { if (it.id == id) mutate(it) else it })
     }
 
     fun activateProfile(id: String?) {
@@ -228,7 +228,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun createProfile() {
         val profile = ControlProfile(name = loc("新しいプロファイル", "New profile"))
-        setProfiles(profiles + profile)
+        applyProfiles(profiles + profile)
         activateProfile(profile.id)
     }
 
@@ -240,12 +240,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             // Fresh button ids, or the two profiles would share latch/turbo state.
             buttons = source.buttons.map { it.copy(id = UUID.randomUUID().toString()) },
         )
-        setProfiles(profiles + copy)
+        applyProfiles(profiles + copy)
         activateProfile(copy.id)
     }
 
     fun deleteProfile(id: String) {
-        setProfiles(profiles.filterNot { it.id == id })
+        applyProfiles(profiles.filterNot { it.id == id })
         siteProfiles = siteProfiles.filterValues { it != id }
         ControlProfileStore.saveAssignments(prefs, siteProfiles)
         if (activeProfileId == id) activateProfile(profiles.firstOrNull()?.id)
@@ -254,11 +254,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun renameProfile(id: String, name: String) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) return
-        setProfiles(profiles.map { if (it.id == id) it.copy(name = trimmed) else it })
+        applyProfiles(profiles.map { if (it.id == id) it.copy(name = trimmed) else it })
     }
 
     fun addPresetProfiles() {
-        setProfiles(profiles + ControlProfile.presets())
+        applyProfiles(profiles + ControlProfile.presets())
         hapticMedium()
     }
 
@@ -437,7 +437,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             id = UUID.randomUUID().toString(),
             buttons = parsed.buttons.map { it.copy(id = UUID.randomUUID().toString()) },
         )
-        setProfiles(profiles + profile)
+        applyProfiles(profiles + profile)
         activateProfile(profile.id)
         hapticMedium()
         return true

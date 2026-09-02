@@ -96,7 +96,7 @@ fun ControlProfilesScreen(
                 },
                 onArrange = {
                     viewModel.padVisible = true
-                    viewModel.setPadEditing(true)
+                    viewModel.setPadEditMode(true)
                     onDismiss()
                 },
             )

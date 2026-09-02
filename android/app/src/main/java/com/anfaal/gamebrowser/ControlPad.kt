@@ -205,7 +205,7 @@ private fun EditModeBar(viewModel: BrowserViewModel, modifier: Modifier = Modifi
             viewModel.showPadInspector = true
         }
         BarAction(loc("完了", "Done"), Icons.Filled.Check, tint = GB.success) {
-            viewModel.setPadEditing(false)
+            viewModel.setPadEditMode(false)
             viewModel.saveProfilesNow()
         }
     }
