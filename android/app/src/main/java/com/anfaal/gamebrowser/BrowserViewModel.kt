@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.net.Uri
 import android.webkit.WebView
 import androidx.compose.runtime.getValue
@@ -912,6 +913,42 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
 
     /**
+     * 0 dark, 1 light, 2 follow the system.
+     *
+     * Declared before [tabManager] for the same reason as [desktopMode]:
+     * `TabManager.configureWebView` reads [wantsDarkPages] to set each tab's
+     * dark rendering *before* that tab's first load, and on a fresh install
+     * that runs synchronously from `TabManager.start()` inside this class's
+     * own construction.
+     */
+    private var appThemeBacking: Int by PersistedInt(prefs, "appTheme", Default.appTheme)
+    var appTheme: Int
+        get() = appThemeBacking
+        set(value) {
+            appThemeBacking = value
+            tabManager.applyDarkMode()
+        }
+
+    /**
+     * Whether web pages should be rendered dark.
+     *
+     * This used to be read by nothing at all: the setting was stored and then
+     * ignored, so whether a page came out dark was left to whatever the
+     * WebView inferred from the app's theme once it was attached to a window.
+     * The first page of a cold start loads before that happens - `start()`
+     * calls `loadUrl` from this class's constructor, long before the view
+     * tree exists - so it rendered light, and only a later navigation (which
+     * is what switching to PC mode forces) came out dark.
+     */
+    val wantsDarkPages: Boolean
+        get() = when (appTheme) {
+            1 -> false
+            2 -> (appContext.resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            else -> true
+        }
+
+    /**
      * Which viewport override the pages should be running, mirroring
      * BrowserViewModel.swift. `desktop` is what actually produces a PC-shaped
      * layout on a page that pins itself to the device width.
@@ -971,7 +1008,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     var joystickUsesArrows: Boolean by PersistedBoolean(prefs, "joystickUsesArrows", Default.joystickUsesArrows)
     var searchEngine: SearchEngine by PersistedEnum(prefs, "searchEngine", SearchEngine.entries.toTypedArray(), Default.searchEngine)
     // newTabPage is declared above, before `tabManager` — see its doc comment.
-    var appTheme: Int by PersistedInt(prefs, "appTheme", Default.appTheme)
     var appLanguage: Int by PersistedInt(prefs, "appLanguage", Default.appLanguage)
     var toolbarOnBottom: Boolean by PersistedBoolean(prefs, "toolbarOnBottom", Default.toolbarOnBottom)
     var showScrollButtons: Boolean by PersistedBoolean(prefs, "showScrollButtons", Default.showScrollButtons)

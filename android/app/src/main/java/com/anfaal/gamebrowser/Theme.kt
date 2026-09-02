@@ -21,6 +21,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -111,6 +114,55 @@ object GB {
 
     /** The screen-filling background every sheet and full-screen surface uses. */
     val background = Brush.verticalGradient(listOf(bg, bgDeep))
+}
+
+/**
+ * Material's own palette, pointed at the tokens above.
+ *
+ * Nothing wrapped the app in a MaterialTheme, so every Material component -
+ * the overflow menu, dialogs, switches, sliders - fell back to Material3's
+ * default, which is a *light* scheme. They came out white on a black app.
+ *
+ * The container colours have to be opaque: Material draws menus and dialogs
+ * on `surfaceContainer`, and GB.surface is translucent white, which would
+ * leave the page showing through them.
+ */
+private val GBColorScheme = darkColorScheme(
+    primary = GB.accent,
+    onPrimary = GB.bgDeep,
+    primaryContainer = GB.accentDeep,
+    onPrimaryContainer = GB.text,
+    secondary = GB.accentDeep,
+    onSecondary = GB.text,
+    background = GB.bg,
+    onBackground = GB.text,
+    surface = GB.bg,
+    onSurface = GB.text,
+    surfaceVariant = Color(0xFF1A1D22),
+    onSurfaceVariant = GB.textDim,
+    surfaceContainerLowest = GB.bgDeep,
+    surfaceContainerLow = GB.bg,
+    surfaceContainer = Color(0xFF12171E),
+    surfaceContainerHigh = Color(0xFF1A1D22),
+    surfaceContainerHighest = Color(0xFF23272E),
+    error = GB.danger,
+    onError = Color.White,
+    outline = GB.borderStrong,
+    outlineVariant = GB.border,
+)
+
+/**
+ * Wraps the whole app, so a Material component is dark from the first frame
+ * rather than from whenever someone remembers to colour it by hand.
+ */
+@Composable
+fun GBAppTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = GBColorScheme) {
+        // MaterialTheme does not provide LocalContentColor - Surface does, and
+        // this app rarely uses one - so without this a Text that doesn't name
+        // its own colour would come out black on black.
+        CompositionLocalProvider(LocalContentColor provides GB.text, content = content)
+    }
 }
 
 /**

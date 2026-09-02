@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.webkit.ProfileStore
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.CoroutineScope
@@ -281,6 +282,27 @@ class TabManager(
     }
 
     /**
+     * Push the dark-rendering preference onto every tab, for when the setting
+     * changes while tabs are already open.
+     */
+    fun applyDarkMode() {
+        for (tab in tabs) applyDarkMode(tab.webView)
+    }
+
+    private fun applyDarkMode(webView: WebView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) return
+        try {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(
+                webView.settings,
+                viewModel.wantsDarkPages,
+            )
+        } catch (e: Exception) {
+            // An older WebView that reports the feature but refuses the call:
+            // the page just renders in its own colours.
+        }
+    }
+
+    /**
      * Switch every tab between the desktop and mobile presentation: the user
      * agent goes out with the next request, and the page picks up the
      * matching viewport override when it finishes loading.
@@ -325,6 +347,11 @@ class TabManager(
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false)
         }
         webView.setBackgroundColor(android.graphics.Color.BLACK)
+        // Before the first load, not after it: a WebView that has not been
+        // attached to a window yet infers nothing useful about the app's
+        // theme, and start() loads the first page from the view model's own
+        // constructor - long before the view tree exists.
+        applyDarkMode(webView)
 
         webView.addJavascriptInterface(JsBridge(context, viewModel), "AndroidBridge")
 
