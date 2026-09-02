@@ -6,51 +6,40 @@ struct DownloadsView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if downloads.items.isEmpty {
-                    emptyState
-                } else {
-                    List {
-                        ForEach(downloads.items) { item in
-                            DownloadRow(item: item, downloads: downloads)
-                        }
+        GBSheet(
+            title: loc("ダウンロード", "Downloads"),
+            subtitle: downloads.activeCount > 0
+                ? loc("\(downloads.activeCount)件 ダウンロード中", "\(downloads.activeCount) in progress")
+                : nil,
+            dismiss: { dismiss() }
+        ) {
+            Button(loc("すべて削除", "Clear"), role: .destructive) { downloads.clearFinished() }
+                .font(GB.Font_.label)
+                .disabled(downloads.items.allSatisfy(\.isActive))
+        } content: {
+            if downloads.items.isEmpty {
+                GBEmptyState(
+                    icon: "arrow.down.circle",
+                    title: loc("ダウンロードはまだありません", "No downloads yet"),
+                    message: loc("保存したファイルは「ファイル」アプリの GameBrowser からも開けます。",
+                                 "Saved files are also in the Files app under GameBrowser.")
+                )
+                Spacer()
+            } else {
+                List {
+                    ForEach(downloads.items) { item in
+                        DownloadRow(item: item, downloads: downloads)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparatorTint(GB.border)
                     }
-                    .listStyle(.plain)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
-            .navigationTitle(loc("ダウンロード", "Downloads"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(loc("すべて削除", "Clear all"), role: .destructive) {
-                        downloads.clearFinished()
-                    }
-                    .disabled(downloads.items.allSatisfy(\.isActive))
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(loc("完了", "Done")) { dismiss() }
-                }
-            }
-            .onAppear { downloads.loadFromDisk() }
         }
         .presentationDetents([.medium, .large])
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 38))
-                .foregroundStyle(.secondary)
-            Text(loc("ダウンロードはまだありません", "No downloads yet"))
-                .font(.system(size: 15, weight: .medium))
-            Text(loc("保存したファイルは「ファイル」アプリの GameBrowser からも開けます",
-                     "Saved files are also in the Files app under GameBrowser"))
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-        }
+        .onAppear { downloads.loadFromDisk() }
     }
 }
 
@@ -68,19 +57,20 @@ struct DownloadRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.filename)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(GB.Font_.rowTitle)
+                    .foregroundStyle(GB.text)
                     .lineLimit(1)
 
                 if item.isActive {
                     ProgressView(value: item.progress)
-                        .tint(.cyan)
+                        .tint(GB.accent)
                     Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .font(GB.Font_.caption)
+                        .foregroundStyle(GB.textDim)
                 } else {
                     Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .font(GB.Font_.caption)
+                        .foregroundStyle(GB.textDim)
                         .lineLimit(1)
                 }
             }
@@ -92,17 +82,19 @@ struct DownloadRow: View {
                     downloads.cancel(item)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(GB.textDim)
                 }
                 .buttonStyle(.plain)
             } else if let url = item.fileURL, item.state == .finished {
                 ShareLink(item: url) {
                     Image(systemName: "square.and.arrow.up")
+                        .foregroundStyle(GB.accent)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, GB.Space.m)
+        .padding(.vertical, GB.Space.s)
         .swipeActions {
             Button(role: .destructive) {
                 downloads.delete(item)
@@ -123,10 +115,10 @@ struct DownloadRow: View {
 
     private var tint: Color {
         switch item.state {
-        case .downloading: return .cyan
-        case .finished: return .green
-        case .failed: return .red
-        case .cancelled: return .secondary
+        case .downloading: return GB.accent
+        case .finished: return GB.success
+        case .failed: return GB.danger
+        case .cancelled: return GB.textDim
         }
     }
 
@@ -163,11 +155,11 @@ struct ToastView: View {
                 .font(.system(size: 13, weight: .medium))
                 .lineLimit(2)
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(GB.text)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.black.opacity(0.82), in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+        .background(GB.bgDeep.opacity(0.94), in: Capsule())
+        .overlay(Capsule().stroke(GB.borderStrong, lineWidth: 0.5))
         .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
         .padding(.horizontal, 20)
     }

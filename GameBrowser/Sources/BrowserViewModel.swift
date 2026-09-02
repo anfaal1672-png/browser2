@@ -924,7 +924,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     fileprivate func handleCredentialSubmitted(username: String, password: String) {
-        guard autofillEnabled, !password.isEmpty, !currentHost.isEmpty else { return }
+        guard autofillEnabled, !isPrivateTab, !password.isEmpty, !currentHost.isEmpty
+        else { return }
         // Already saved identically? Nothing to do.
         if credentials.contains(where: {
             $0.domain == currentHost && $0.username == username && $0.password == password
@@ -1704,7 +1705,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     /// Persist thumbnails so the tab switcher isn't blank after a relaunch.
     private func saveSnapshots() {
-        let images = tabs.map(\.snapshot)
+        // Indexed to match saveTabs()'s records, which exclude private tabs —
+        // a private tab's thumbnail is a picture of a page that is not
+        // supposed to exist after the session.
+        let images = tabs.filter { !$0.isPrivate }.map(\.snapshot)
         let dir = Self.snapshotsDir
         Task.detached(priority: .utility) {
             for (i, image) in images.enumerated() {
@@ -1743,7 +1747,11 @@ final class BrowserViewModel: NSObject, ObservableObject {
     }
 
     private func saveTabs() {
-        let records = tabs.map { tab -> TabRecord in
+        // Private tabs are left out entirely: they must not reappear after a
+        // relaunch, and neither their URLs nor their thumbnails belong on disk.
+        let persisted = tabs.enumerated().filter { !$0.element.isPrivate }
+        let records = persisted.map { entry -> TabRecord in
+            let tab = entry.element
             let url = tab.webView.url
             // loadHTMLString reports about:blank — persist the start-page marker.
             let urlString: String
@@ -1762,7 +1770,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         if let data = try? JSONEncoder().encode(records) {
             defaults.set(data, forKey: "savedTabRecords")
         }
-        defaults.set(activeTabIndex, forKey: "savedActiveTabIndex")
+        // Expressed within the persisted subset, since private tabs shift
+        // every index after them.
+        let activeAmongPersisted = persisted.firstIndex { $0.offset == activeTabIndex } ?? 0
+        defaults.set(activeAmongPersisted, forKey: "savedActiveTabIndex")
         saveSnapshots()
     }
 
@@ -1803,6 +1814,9 @@ final class BrowserViewModel: NSObject, ObservableObject {
     final class Tab: Identifiable, ObservableObject {
         let id = UUID()
         let webView: WKWebView
+        /// Private tabs use an ephemeral data store, record no history, and
+        /// are never written to disk — neither the URL nor the thumbnail.
+        let isPrivate: Bool
         @Published var snapshot: UIImage?
         /// Last requested URL; used for persistence while the page is still loading.
         var pendingURL: URL?
@@ -1812,7 +1826,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         var pendingLoad: URL?
         /// Scroll position to restore once the page finishes loading.
         var pendingScroll: CGPoint?
-        init(webView: WKWebView) { self.webView = webView }
+        init(webView: WKWebView, isPrivate: Bool = false) {
+            self.webView = webView
+            self.isPrivate = isPrivate
+        }
 
         @MainActor var title: String {
             let t = webView.title ?? ""
@@ -1840,8 +1857,22 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     var webView: WKWebView { tabs[activeTabIndex].webView }
 
-    private func makeWebView() -> WKWebView {
+    /// One shared ephemeral store, so private tabs share a session with each
+    /// other but nothing with normal browsing. It is replaced once the last
+    /// private tab closes — that, not closing a single tab, is what ends the
+    /// private session.
+    private var privateDataStore = WKWebsiteDataStore.nonPersistent()
+
+    private func endPrivateSessionIfEmpty() {
+        guard !tabs.contains(where: { $0.isPrivate }) else { return }
+        privateDataStore = WKWebsiteDataStore.nonPersistent()
+    }
+
+    private func makeWebView(isPrivate: Bool = false) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // Cookies, storage and caches live only in memory for a private tab
+        // and go away with the session.
+        config.websiteDataStore = isPrivate ? privateDataStore : .default()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
@@ -1872,15 +1903,24 @@ final class BrowserViewModel: NSObject, ObservableObject {
         return webView
     }
 
-    func newTab(url: URL? = nil) {
-        let tab = Tab(webView: makeWebView())
-        let useStartPage = url == nil && newTabPage == .startPage
+    func newTab(url: URL? = nil, isPrivate: Bool = false) {
+        let tab = Tab(webView: makeWebView(isPrivate: isPrivate), isPrivate: isPrivate)
+        let useStartPage = url == nil && newTabPage == .startPage && !isPrivate
         tab.pendingURL = useStartPage ? URL(string: Self.startPageMarker) : (url ?? Self.homeURL)
         tab.pendingLoad = tab.pendingURL
         tabs.append(tab)
         selectTab(tabs.count - 1)   // performs the load
         saveTabs()
+        if isPrivate { hapticMedium() }
     }
+
+    /// True when the tab on screen is private — drives the violet accent and
+    /// everything that must not be recorded.
+    var isPrivateTab: Bool {
+        tabs.indices.contains(activeTabIndex) && tabs[activeTabIndex].isPrivate
+    }
+
+    var privateTabCount: Int { tabs.filter(\.isPrivate).count }
 
     /// Load a tab that hasn't been loaded yet, the first time it is shown.
     private func loadPendingIfNeeded(_ tab: Tab) {
@@ -1940,6 +1980,8 @@ final class BrowserViewModel: NSObject, ObservableObject {
         let tab = tabs.remove(at: index)
         tab.webView.stopLoading()
         tab.webView.setAllMediaPlaybackSuspended(true)
+
+        endPrivateSessionIfEmpty()
 
         if tabs.isEmpty {
             newTab()
@@ -2416,7 +2458,7 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
         webView.uiDelegate = self
         attachAdBlock(to: webView)
 
-        let tab = Tab(webView: webView)
+        let tab = Tab(webView: webView, isPrivate: isPrivateTab)
         // WebKit performs the popup's load itself (not via our load(_:)), so
         // without this, saveTabs() — called synchronously right below, before
         // the popup's own .url KVO or navigation delegate callbacks fire —
@@ -2529,7 +2571,11 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
             }
 
             guard let url = webView.url else { return }
-            self.recordHistory(url: url, title: webView.title ?? "")
+            // A private tab leaves no trace in history.
+            let fromPrivateTab = self.tabs.first { $0.webView === webView }?.isPrivate ?? false
+            if !fromPrivateTab {
+                self.recordHistory(url: url, title: webView.title ?? "")
+            }
         }
     }
 
