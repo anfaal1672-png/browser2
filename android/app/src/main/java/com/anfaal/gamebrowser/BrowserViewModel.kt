@@ -30,6 +30,20 @@ private const val PROFILE_SAVE_DEBOUNCE_MS = 400L
 /** Turbo re-press interval, matching the iOS timer. */
 private const val TURBO_INTERVAL_MS = 90L
 
+/**
+ * Hold-to-scroll shape, matching ScrollRamp on iOS. A page can be twenty
+ * screens long, so a single speed is always wrong: slow enough to place
+ * yourself precisely is far too slow to get anywhere, and fast enough to
+ * travel overshoots every time. Holding ramps from one to the other, and
+ * releasing glides to a stop rather than stopping dead.
+ */
+private const val SCROLL_RAMP_START = 0.4f      // x scrollSpeed at the moment of press
+private const val SCROLL_RAMP_PEAK = 1.6f       // ... after SCROLL_RAMP_SECONDS held
+private const val SCROLL_RAMP_SECONDS = 1.2f
+private const val SCROLL_GLIDE_SECONDS = 0.35f
+private const val SCROLL_TICK_MS = 16L
+private const val SCROLL_MAX_STEP = 1f / 20f
+
 /** A key the virtual keyboard/joystick can send, mirroring InputBridge.Key on iOS. */
 data class GbKey(val key: String, val code: String, val keyCode: Int, val label: String) {
     companion object {
@@ -1413,22 +1427,72 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     private var scrollJob: Job? = null
     private var scrollDirection: Float = 0f
+    private var scrollHeldSinceNanos: Long = 0L
+    private var scrollReleasedAtNanos: Long = 0L
 
-    /** Starts a smooth repeating scroll in [direction] (-1 up, 1 down) at [scrollSpeed] px/s, for the scroll-button strip. */
+    /**
+     * Current speed as a multiple of [scrollSpeed], carried across a release so
+     * the glide starts from whatever the hold had reached.
+     */
+    private var scrollMultiplier: Float = 0f
+
+    /** Start (or resume) a held scroll in [direction] (+1 down / -1 up). */
     fun startSmoothScroll(direction: Float) {
+        val now = System.nanoTime()
+        // Pressing again mid-glide picks the ramp back up where the speed
+        // currently is, so repeated taps read as one continuous scroll rather
+        // than restarting from a crawl each time.
+        val resumed = ((scrollMultiplier - SCROLL_RAMP_START) /
+            (SCROLL_RAMP_PEAK - SCROLL_RAMP_START)).coerceIn(0f, 1f) * SCROLL_RAMP_SECONDS
+        scrollHeldSinceNanos = now - (resumed * 1_000_000_000f).toLong()
+        scrollReleasedAtNanos = 0L
         scrollDirection = direction
         if (scrollJob != null) return
         scrollJob = viewModelScope.launch {
+            var lastTick = System.nanoTime()
             while (true) {
-                scroll(0f, scrollDirection * scrollSpeed / 60f)
-                delay(16)
+                delay(SCROLL_TICK_MS)
+                val tick = System.nanoTime()
+                // Real elapsed time, not the nominal delay: a frame that took
+                // longer must still move the page the distance it owes, and a
+                // stalled main thread must not teleport it on the next tick.
+                val step = ((tick - lastTick) / 1_000_000_000.0)
+                    .coerceAtMost(SCROLL_MAX_STEP.toDouble()).toFloat()
+                lastTick = tick
+
+                val released = scrollReleasedAtNanos
+                if (released != 0L) {
+                    val progress = (tick - released) / (SCROLL_GLIDE_SECONDS * 1_000_000_000f)
+                    if (progress >= 1f) break
+                    // Ease out, so the last few frames barely move.
+                    scrollMultiplier *= (1f - progress) * (1f - progress)
+                } else {
+                    val held = (tick - scrollHeldSinceNanos) / 1_000_000_000f
+                    val progress = (held / SCROLL_RAMP_SECONDS).coerceIn(0f, 1f)
+                    scrollMultiplier = SCROLL_RAMP_START +
+                        (SCROLL_RAMP_PEAK - SCROLL_RAMP_START) * progress
+                }
+                scroll(0f, scrollDirection * scrollSpeed * scrollMultiplier * step)
             }
+            stopSmoothScroll()
         }
     }
 
+    /** Let go: coast to a stop instead of stopping mid-motion. */
     fun endSmoothScroll() {
-        scrollJob?.cancel()
+        if (scrollJob == null || scrollReleasedAtNanos != 0L) return
+        scrollReleasedAtNanos = System.nanoTime()
+    }
+
+    /**
+     * Clears the state once the glide has run out. Called from inside the job
+     * itself, so it must not cancel it - the loop has already left.
+     */
+    private fun stopSmoothScroll() {
         scrollJob = null
+        scrollReleasedAtNanos = 0L
+        scrollHeldSinceNanos = 0L
+        scrollMultiplier = 0f
     }
 
     // MARK: - Built-in romaji IME

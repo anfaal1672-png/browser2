@@ -24,7 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mouse
@@ -59,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
@@ -160,8 +158,8 @@ private val TintPink = Color(0xFFFF375F)
 private val TintIndigo = Color(0xFF5E5CE6)
 private val TintGray = Color(0xFF8E8E93)
 
+/** Sheet backdrop for the card editor; the screen itself uses GBSheet's. */
 private val BackgroundTop = GB.bg
-private val BackgroundBottom = GB.bgDeep
 
 /**
  * Custom-designed settings screen: dark surface cards with tinted section
@@ -191,10 +189,15 @@ fun SettingsScreen(
 ) {
     var showCardEditor by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(BackgroundTop, BackgroundBottom))),
+    // The header is deliberately outside the scrolling column: it used to be
+    // the first row inside it, so the close button scrolled away and getting
+    // out of a settings screen this long meant scrolling all the way back up.
+    // GBSheet is the same chrome every other sheet in the app already uses.
+    GBSheet(
+        title = loc("設定", "Settings"),
+        onDismiss = onDismiss,
+        modifier = modifier,
+        accent = if (viewModel.isPrivateTab) GB.privateAccent else GB.accent,
     ) {
         Column(
             modifier = Modifier
@@ -203,7 +206,6 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            SettingsHeader(onDismiss)
             BrowserModeCard(viewModel)
             ControlsCard(viewModel)
             SearchCard(viewModel, onDismiss)
@@ -221,34 +223,6 @@ fun SettingsScreen(
 
     if (showCardEditor) {
         CardEditorSheet(viewModel, onDismiss = { showCardEditor = false })
-    }
-}
-
-@Composable
-private fun SettingsHeader(onDismiss: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 20.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(loc("設定", "Settings"), style = GB.Type.title)
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(GB.surfaceHigh)
-                .clickable(onClick = onDismiss),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Filled.Close,
-                contentDescription = loc("閉じる", "Close"),
-                tint = Color.White.copy(alpha = 0.8f),
-                modifier = Modifier.size(14.dp),
-            )
-        }
     }
 }
 

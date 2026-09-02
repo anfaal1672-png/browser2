@@ -2191,6 +2191,26 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     private var scrollTimer: Timer?
     private var scrollDirection: CGFloat = 0
+    private var scrollHeldSince: Date?
+    private var scrollReleasedAt: Date?
+    private var scrollLastTick: Date?
+    /// Current speed as a multiple of `scrollSpeed`, carried across a release
+    /// so the glide starts from whatever the hold had reached.
+    private var scrollMultiplier: Double = 0
+
+    /// Hold-to-scroll shape. A page can be twenty screens long, so a single
+    /// speed is always wrong: slow enough to place yourself precisely is far
+    /// too slow to get anywhere, and fast enough to travel overshoots every
+    /// time. Holding ramps from one to the other, and releasing glides to a
+    /// stop rather than stopping dead, which is how a flick already behaves.
+    private enum ScrollRamp {
+        static let start = 0.4          // × scrollSpeed at the moment of press
+        static let peak = 1.6           // ... after `ramp` seconds held
+        static let ramp: Double = 1.2
+        static let glide: Double = 0.35
+        /// A stalled main thread must not teleport the page on the next tick.
+        static let maxStep: Double = 1.0 / 20
+    }
 
     /// Smooth-scroll speed in px/s while a scroll button is held (user setting).
     @Published var scrollSpeed: Double = {
@@ -2200,21 +2220,61 @@ final class BrowserViewModel: NSObject, ObservableObject {
         didSet { UserDefaults.standard.set(scrollSpeed, forKey: "scrollSpeed") }
     }
 
-    /// Scroll smoothly at constant speed in `direction` (+1 down / -1 up).
+    /// Start (or resume) a held scroll in `direction` (+1 down / -1 up).
     func startSmoothScroll(direction: CGFloat) {
+        let now = Date()
+        // Pressing again mid-glide picks the ramp back up where the speed
+        // currently is, so repeated taps read as one continuous scroll rather
+        // than restarting from a crawl each time.
+        let resumed = ((scrollMultiplier - ScrollRamp.start)
+                       / (ScrollRamp.peak - ScrollRamp.start)) * ScrollRamp.ramp
+        scrollHeldSince = now.addingTimeInterval(-min(max(resumed, 0), ScrollRamp.ramp))
+        scrollReleasedAt = nil
         scrollDirection = direction
         guard scrollTimer == nil else { return }
-        scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.scroll(dx: 0, dy: self.scrollDirection * self.scrollSpeed / 60)
-            }
+        scrollLastTick = now
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.smoothScrollTick() }
         }
+        // .common, so the page keeps moving while a finger is down: in
+        // .default the run loop enters tracking mode and the timer stops
+        // firing, which is exactly the whole time a scroll button is held.
+        RunLoop.main.add(timer, forMode: .common)
+        scrollTimer = timer
     }
 
+    private func smoothScrollTick() {
+        let now = Date()
+        let step = min(now.timeIntervalSince(scrollLastTick ?? now), ScrollRamp.maxStep)
+        scrollLastTick = now
+
+        if let released = scrollReleasedAt {
+            let progress = now.timeIntervalSince(released) / ScrollRamp.glide
+            guard progress < 1 else { return stopSmoothScroll() }
+            // Ease out, so the last few frames barely move.
+            scrollMultiplier *= (1 - progress) * (1 - progress)
+        } else {
+            let held = now.timeIntervalSince(scrollHeldSince ?? now)
+            let progress = min(held / ScrollRamp.ramp, 1)
+            scrollMultiplier = ScrollRamp.start
+                + (ScrollRamp.peak - ScrollRamp.start) * progress
+        }
+        scroll(dx: 0, dy: scrollDirection * scrollSpeed * scrollMultiplier * step)
+    }
+
+    /// Let go: coast to a stop instead of stopping mid-motion.
     func endSmoothScroll() {
+        guard scrollTimer != nil, scrollReleasedAt == nil else { return }
+        scrollReleasedAt = Date()
+    }
+
+    private func stopSmoothScroll() {
         scrollTimer?.invalidate()
         scrollTimer = nil
+        scrollReleasedAt = nil
+        scrollHeldSince = nil
+        scrollLastTick = nil
+        scrollMultiplier = 0
     }
 
     func toggleDragLock() {

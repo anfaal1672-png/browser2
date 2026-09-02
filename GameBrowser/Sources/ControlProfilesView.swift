@@ -21,16 +21,23 @@ struct ControlProfilesView: View {
                            startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 14) {
-                    header
-                    profilesCard
-                    tuningCard
-                    siteCard
-                    gamepadCard
+            // The header sits outside the ScrollView on purpose, so the close
+            // button stays reachable however far down the page you are.
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
+                ScrollView {
+                    VStack(spacing: 14) {
+                        profilesCard
+                        tuningCard
+                        siteCard
+                        gamepadCard
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 30)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 30)
             }
         }
         .preferredColorScheme(.dark)
@@ -67,7 +74,7 @@ struct ControlProfilesView: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white.opacity(0.8))
                     .padding(9)
-                    .background(.white.opacity(0.1), in: Circle())
+                    .background(GB.surfaceHigh, in: Circle())
             }
         }
         .padding(.top, 20)

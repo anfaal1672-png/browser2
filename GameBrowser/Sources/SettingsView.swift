@@ -26,23 +26,32 @@ struct SettingsView: View {
                            startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 14) {
-                    header
-                    browserModeCard
-                    controlsCard
-                    searchCard
-                    appearanceCard
-                    autofillCard
-                    securityCard
-                    permissionsCard
-                    dataCard
-                    highlightsCard
-                    backgroundCard
-                    resetAllCard
+            // The header sits outside the ScrollView on purpose: it used to be
+            // the first row inside it, so the close button scrolled away and
+            // getting out of a screen this long meant scrolling all the way
+            // back up.
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
+                ScrollView {
+                    VStack(spacing: 14) {
+                        browserModeCard
+                        controlsCard
+                        searchCard
+                        appearanceCard
+                        autofillCard
+                        securityCard
+                        permissionsCard
+                        dataCard
+                        highlightsCard
+                        backgroundCard
+                        resetAllCard
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 30)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 30)
             }
         }
         .preferredColorScheme(.dark)
@@ -77,7 +86,7 @@ struct SettingsView: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white.opacity(0.8))
                     .padding(9)
-                    .background(.white.opacity(0.1), in: Circle())
+                    .background(GB.surfaceHigh, in: Circle())
             }
         }
         .padding(.top, 20)
