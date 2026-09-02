@@ -123,6 +123,37 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
 
     /**
+     * Declared before [tabManager] for the same reason as [newTabPage]:
+     * `TabManager.configureWebView` reads it to pick each tab's user agent,
+     * and on a fresh install that runs synchronously from `TabManager.start()`
+     * inside this class's own construction — reading it after `tabManager`
+     * would hit an unconstructed `PersistedBoolean` delegate and crash on the
+     * very first launch.
+     */
+    private var desktopModeBacking: Boolean by PersistedBoolean(prefs, "desktopMode", false)
+    var desktopMode: Boolean
+        get() = desktopModeBacking
+        set(value) {
+            desktopModeBacking = value
+            // Reloading alone changed nothing: the user agent was pinned to
+            // the desktop one for every tab regardless, and the page's own
+            // viewport meta kept the layout at device width.
+            tabManager.applyContentMode()
+            applyViewportMode()
+        }
+
+    /**
+     * Which viewport override the pages should be running, mirroring
+     * BrowserViewModel.swift. `desktop` is what actually produces a PC-shaped
+     * layout on a page that pins itself to the device width.
+     */
+    val viewportMode: String get() = if (desktopMode) "desktop" else "zoom"
+
+    fun applyViewportMode() {
+        webView?.evaluateJavascript("window.__gb && __gb.setViewportMode('$viewportMode')", null)
+    }
+
+    /**
      * Owns every tab's WebView + persistence; see TabManager.kt.
      *
      * Construction is split into two steps to avoid a circular-initialization
@@ -207,29 +238,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 highlightSaveState = HighlightSaveState.Idle
             }
         }
-    }
-
-    private var desktopModeBacking: Boolean by PersistedBoolean(prefs, "desktopMode", false)
-    var desktopMode: Boolean
-        get() = desktopModeBacking
-        set(value) {
-            desktopModeBacking = value
-            // Reloading alone changed nothing: the user agent was pinned to
-            // the desktop one for every tab regardless, and the page's own
-            // viewport meta kept the layout at device width.
-            tabManager.applyContentMode()
-            applyViewportMode()
-        }
-
-    /**
-     * Which viewport override the pages should be running, mirroring
-     * BrowserViewModel.swift. `desktop` is what actually produces a PC-shaped
-     * layout on a page that pins itself to the device width.
-     */
-    val viewportMode: String get() = if (desktopMode) "desktop" else "zoom"
-
-    fun applyViewportMode() {
-        webView?.evaluateJavascript("window.__gb && __gb.setViewportMode('$viewportMode')", null)
     }
 
     private var adBlockEnabledBacking: Boolean by PersistedBoolean(prefs, "adBlockEnabled", true)
