@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paths the FileProvider may republish as content:// URIs. Only the shared
+  Downloads folder is listed: a finished download is the one thing this app
+  hands to another app, and the download service's own file:// URI would throw
+  FileUriExposedException the moment it crossed that boundary.
+-->
+<paths>
+    <external-path name="downloads" path="Download/" />
+</paths>

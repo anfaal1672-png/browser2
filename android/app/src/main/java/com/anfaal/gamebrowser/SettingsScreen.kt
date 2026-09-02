@@ -332,6 +332,9 @@ private fun ControlsCard(viewModel: BrowserViewModel) {
 
         SettingsDivider()
         ToggleRow(loc("触覚フィードバック", "Haptic feedback"), viewModel.hapticsEnabled) { viewModel.hapticsEnabled = it }
+        ToggleRow(loc("FPS(フレームレート)を表示", "Show FPS meter"), viewModel.showFps) {
+            viewModel.showFps = it
+        }
         ToggleRow(loc("ジョイスティック: 矢印キーを送信", "Joystick sends arrow keys"), viewModel.joystickUsesArrows) {
             viewModel.joystickUsesArrows = it
         }

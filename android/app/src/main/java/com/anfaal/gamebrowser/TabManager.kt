@@ -119,6 +119,15 @@ class Tab(val webView: WebView, val isPrivate: Boolean = false) {
      */
     var pendingUrl: String? = null
 
+    /**
+     * Live and page-initial zoom, reported by WebViewClient.onScaleChanged.
+     * WebView has no "reset zoom" call and its default scale is
+     * density-dependent, so the only reliable way back is to remember what the
+     * page opened at and divide by whatever it is now.
+     */
+    var pageScale: Float = 0f
+    var initialScale: Float = 0f
+
     /** Scroll offset to restore once this tab's page finishes loading; cleared once consumed. */
     var pendingScrollX: Int? = null
     var pendingScrollY: Int? = null
@@ -297,8 +306,25 @@ class TabManager(
 
         webView.addJavascriptInterface(JsBridge(context, viewModel), "AndroidBridge")
 
+        // Anything the engine will not display - a game mod, a save file, an
+        // archive - arrives here instead of navigating nowhere.
+        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
+            viewModel.startDownload(
+                url = url,
+                userAgent = userAgent,
+                contentDisposition = contentDisposition,
+                mimeType = mimeType,
+                contentLength = contentLength,
+            )
+        }
+
         webView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                // The focused element belonged to the page being replaced.
+                if (tab === activeTab) viewModel.clearGameFocus()
+                // A new page opens at its own scale; the old one's is no
+                // longer what "reset zoom" should go back to.
+                tab.initialScale = 0f
                 // Re-inject at document start on every navigation (Android has no
                 // per-navigation WKUserScript equivalent).
                 view.evaluateJavascript(bridgeScript(context), null)
@@ -307,6 +333,11 @@ class TabManager(
                 if (viewModel.adBlockEnabled) {
                     view.evaluateJavascript(AdBlocker.cosmeticHidingScript, null)
                 }
+            }
+
+            override fun onScaleChanged(view: WebView, oldScale: Float, newScale: Float) {
+                tab.pageScale = newScale
+                if (tab.initialScale <= 0f) tab.initialScale = newScale
             }
 
             override fun shouldInterceptRequest(
@@ -353,6 +384,8 @@ class TabManager(
                 // pins itself to the device width.
                 view.evaluateJavascript(
                     "window.__gb && __gb.setViewportMode('${viewModel.viewportMode}')", null)
+
+                if (tab === activeTab) viewModel.applyFpsMeter()
 
                 if (tab === activeTab) {
                     viewModel.currentUrl = url

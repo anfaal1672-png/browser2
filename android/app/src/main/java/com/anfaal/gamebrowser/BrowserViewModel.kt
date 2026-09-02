@@ -1,6 +1,8 @@
 package com.anfaal.gamebrowser
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.webkit.WebView
@@ -18,6 +20,9 @@ import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+
+/** Which glyph a toast shows, mirroring the SF Symbol names iOS passes to `toast(_:icon:)`. */
+enum class ToastIcon { SUCCESS, DOWNLOAD, COPY, TAB, WARNING }
 
 /** A key the virtual keyboard/joystick can send, mirroring InputBridge.Key on iOS. */
 data class GbKey(val key: String, val code: String, val keyCode: Int, val label: String) {
@@ -60,6 +65,187 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         // read — safe to call from here too (idempotent), so `loc()` works
         // correctly from the very first composition.
         Localization.init(appContext)
+    }
+
+    // MARK: - Downloads
+
+    /**
+     * Downloads live here rather than in the tab, so they survive the tab that
+     * started them - same as the iOS view model's `downloads`.
+     */
+    val downloads = DownloadManager(appContext).also { manager ->
+        manager.onFinished = { name ->
+            toast(loc("ダウンロード完了: $name", "Downloaded: $name"), ToastIcon.DOWNLOAD)
+        }
+    }
+
+    var showDownloads by mutableStateOf(false)
+
+    /** How many downloads are running, for the badge on the toolbar menu. */
+    val activeDownloads: Int get() = downloads.activeCount
+
+    /**
+     * Download a URL directly - from the link menu, or because the WebView
+     * handed us something it cannot display.
+     */
+    fun startDownload(
+        url: String,
+        userAgent: String? = null,
+        contentDisposition: String? = null,
+        mimeType: String? = null,
+        contentLength: Long = 0,
+    ) {
+        val started = downloads.start(
+            url = url,
+            userAgent = userAgent,
+            contentDisposition = contentDisposition,
+            mimeType = mimeType,
+            contentLength = contentLength,
+            referer = currentUrl,
+        )
+        if (started) {
+            toast(loc("ダウンロードを開始しました", "Download started"), ToastIcon.DOWNLOAD)
+        } else {
+            // blob:/data: URLs and the like: the download service cannot fetch
+            // them, and saying so beats appearing to do nothing.
+            toast(loc("このリンクはダウンロードできません", "This link can't be downloaded"),
+                  ToastIcon.WARNING)
+        }
+    }
+
+    // MARK: - Toasts
+
+    /**
+     * Brief confirmation for things that otherwise happen invisibly - a
+     * finished download, a copied link, a profile switching itself on.
+     * Mirrors BrowserViewModel.swift's `toast(_:icon:)`.
+     */
+    var toastText by mutableStateOf<String?>(null)
+        private set
+    var toastIcon by mutableStateOf(ToastIcon.SUCCESS)
+        private set
+    private var toastJob: Job? = null
+
+    fun toast(text: String, icon: ToastIcon = ToastIcon.SUCCESS) {
+        toastText = text
+        toastIcon = icon
+        toastJob?.cancel()
+        toastJob = viewModelScope.launch {
+            delay(2400)
+            toastText = null
+        }
+    }
+
+    // MARK: - Link under the cursor (right-click menu)
+
+    /**
+     * Link the page reported under the pointer on a right-click, so the app can
+     * offer a real menu - WebView's own long-press menu never appears in cursor
+     * mode, because the trackpad overlay takes the touches.
+     */
+    data class LinkTarget(val url: String, val text: String)
+
+    var linkTarget by mutableStateOf<LinkTarget?>(null)
+
+    fun openLinkInNewTab() {
+        val target = linkTarget ?: return
+        // A link opened out of a private tab stays private.
+        tabManager.newTab(target.url, isPrivate = isPrivateTab)
+        toast(loc("新しいタブで開きました", "Opened in a new tab"), ToastIcon.TAB)
+        linkTarget = null
+    }
+
+    fun downloadLink() {
+        val target = linkTarget ?: return
+        startDownload(target.url)
+        linkTarget = null
+    }
+
+    fun copyLink() {
+        val target = linkTarget ?: return
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText("URL", target.url))
+        toast(loc("リンクをコピーしました", "Link copied"), ToastIcon.COPY)
+        linkTarget = null
+    }
+
+    // MARK: - Focus the game / FPS meter
+
+    /** True while the page's game element is blown up to fill the screen. */
+    var gameFocused by mutableStateOf(false)
+        private set
+
+    /** Frames per second reported by the page's own animation loop. */
+    var fps by mutableStateOf(0)
+        private set
+
+    private var showFpsBacking: Boolean by PersistedBoolean(prefs, "showFPS", false)
+    var showFps: Boolean
+        get() = showFpsBacking
+        set(value) {
+            showFpsBacking = value
+            if (!value) fps = 0
+            applyFpsMeter()
+        }
+
+    fun applyFpsMeter() {
+        webView?.evaluateJavascript("window.__gb && __gb.setFpsMeter($showFps)", null)
+    }
+
+    fun handleFpsReport(value: Int) {
+        if (showFps) fps = value
+    }
+
+    /**
+     * Fill the screen with the game itself. Most browser-game pages wrap a
+     * small canvas or iframe in ads and site chrome; this promotes that one
+     * element and hides everything around it. Pressing again restores it.
+     */
+    fun toggleGameFocus() {
+        val view = webView ?: return
+        val focusing = !gameFocused
+        val js = if (focusing) "window.__gb && __gb.focusGame()" else "window.__gb && __gb.unfocusGame()"
+        view.evaluateJavascript(js) { result ->
+            val succeeded = result == "true"
+            if (focusing) {
+                // Nothing game-shaped on the page - say so by staying put
+                // rather than silently pretending it worked.
+                gameFocused = succeeded
+                if (succeeded) {
+                    immersive = true
+                    hapticMedium()
+                } else {
+                    toast(loc("全画面にできる要素が見つかりません", "Nothing to fullscreen on this page"),
+                          ToastIcon.WARNING)
+                }
+            } else {
+                gameFocused = false
+                hapticLight()
+            }
+        }
+    }
+
+    /**
+     * Pinch-to-zoom in cursor mode. The trackpad overlay takes every touch
+     * there, so the WebView never sees the pinch itself and pages simply could
+     * not be zoomed; [factor] is the frame's change in finger separation.
+     */
+    fun pinchZoom(factor: Float) {
+        val view = webView ?: return
+        if (factor.isNaN() || factor <= 0f) return
+        view.zoomBy(factor.coerceIn(0.01f, 100f))
+    }
+
+    /** Back to the zoom the page opened at, after a pinch. */
+    fun resetZoom() {
+        val tab = tabManager.activeTab ?: return
+        if (tab.pageScale <= 0f || tab.initialScale <= 0f) return
+        tab.webView.zoomBy((tab.initialScale / tab.pageScale).coerceIn(0.01f, 100f))
+    }
+
+    /** A navigation drops whatever the previous page had focused. */
+    fun clearGameFocus() {
+        gameFocused = false
     }
 
     // MARK: - Core virtual mouse/keyboard state
@@ -874,6 +1060,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     override fun onCleared() {
         tabManager.dispose()
+        downloads.dispose()
         super.onCleared()
     }
 }

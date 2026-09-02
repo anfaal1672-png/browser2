@@ -191,6 +191,9 @@ class MainActivity : FragmentActivity() {
                         if (viewModel.highlightsEnabled) {
                             HighlightButton(viewModel, modifier = Modifier.align(Alignment.TopStart))
                         }
+                        if (viewModel.showFps) {
+                            FpsBadge(viewModel, modifier = Modifier.align(Alignment.BottomStart))
+                        }
                     }
 
                     if (viewModel.pendingCredential != null) {
@@ -239,6 +242,24 @@ class MainActivity : FragmentActivity() {
                 if (showHistory) {
                     HistoryScreen(viewModel, onDismiss = { showHistory = false }, modifier = Modifier.fillMaxSize())
                 }
+                if (viewModel.showDownloads) {
+                    DownloadsScreen(
+                        viewModel.downloads,
+                        onDismiss = { viewModel.showDownloads = false },
+                        modifier = Modifier.fillMaxSize(),
+                        accent = if (viewModel.isPrivateTab) GB.privateAccent else GB.accent,
+                    )
+                }
+
+                // Right-clicking a link in cursor mode, and the confirmations
+                // for things that otherwise happen invisibly.
+                LinkMenu(viewModel)
+                ToastHost(
+                    viewModel,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 90.dp),
+                )
             }
 
             LaunchedEffect(Unit) {

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -26,9 +27,11 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CloseFullscreen
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
@@ -40,11 +43,13 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -321,6 +326,16 @@ private fun OverflowMenu(
                 tint = GB.text,
                 modifier = Modifier.size(20.dp),
             )
+            if (viewModel.activeDownloads > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 9.dp, end = 8.dp)
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(GB.accent),
+                )
+            }
         }
         DropdownMenu(
             expanded = open,
@@ -361,6 +376,18 @@ private fun OverflowMenu(
                 open = false
                 viewModel.newPrivateTab()
             }
+            MenuItem(
+                if (viewModel.activeDownloads > 0) {
+                    loc("ダウンロード (${viewModel.activeDownloads}件)", "Downloads (${viewModel.activeDownloads})")
+                } else {
+                    loc("ダウンロード", "Downloads")
+                },
+                Icons.Filled.Download,
+                accent,
+            ) {
+                open = false
+                viewModel.showDownloads = true
+            }
             MenuItem(loc("ページを翻訳", "Translate page"), Icons.Filled.Translate, accent, viewModel.currentUrl != null) {
                 open = false
                 viewModel.translatePage()
@@ -374,6 +401,15 @@ private fun OverflowMenu(
 
             GBDivider(Modifier.padding(vertical = 4.dp))
 
+            MenuItem(
+                if (viewModel.gameFocused) loc("ゲーム全画面を解除", "Exit game fullscreen")
+                else loc("ゲームだけ全画面", "Fullscreen the game"),
+                if (viewModel.gameFocused) Icons.Filled.CloseFullscreen else Icons.Filled.SportsEsports,
+                accent,
+            ) {
+                open = false
+                viewModel.toggleGameFocus()
+            }
             MenuItem(
                 if (viewModel.desktopMode) loc("モバイル版サイトを表示", "Show mobile site")
                 else loc("PC版サイトを表示", "Show desktop site"),
@@ -391,6 +427,10 @@ private fun OverflowMenu(
             ) {
                 open = false
                 viewModel.showScrollButtons = !viewModel.showScrollButtons
+            }
+            MenuItem(loc("ズームをリセット", "Reset zoom"), Icons.Filled.ZoomOutMap, accent) {
+                open = false
+                viewModel.resetZoom()
             }
             MenuItem(loc("ホーム", "Home"), Icons.Filled.Home, accent) {
                 open = false

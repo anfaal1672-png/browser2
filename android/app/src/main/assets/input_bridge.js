@@ -68,8 +68,11 @@
         } catch (e) {}
     }
 
+    // Returns false when the page called preventDefault, same as iOS - the
+    // right-click handler needs that to tell "the page wants this event" from
+    // "nothing is listening, show the native link menu".
     function fireMouse(type, target, x, y, button, extra) {
-        target.dispatchEvent(new MouseEvent(type, common(x, y, Object.assign({
+        return target.dispatchEvent(new MouseEvent(type, common(x, y, Object.assign({
             button: button, detail: (type === 'dblclick') ? 2 : 1,
         }, extra))));
     }
@@ -307,7 +310,21 @@
                 fireMouse('click', target, x, y, 0);
                 if (clickCount === 2) { fireMouse('dblclick', target, x, y, 0); }
             } else if (button === 2) {
-                fireMouse('contextmenu', target, x, y, 2);
+                const notCancelled = fireMouse('contextmenu', target, x, y, 2);
+                // WebView's own long-press menu never appears in cursor mode
+                // (the trackpad overlay takes the touches), so hand the link to
+                // native for a real menu - but only when the page didn't claim
+                // the right-click for itself, which is what games do.
+                if (notCancelled && target && target.closest) {
+                    const anchor = target.closest('a[href]');
+                    if (anchor && anchor.href) {
+                        post({
+                            type: 'link',
+                            href: anchor.href,
+                            text: (anchor.textContent || '').trim().slice(0, 120),
+                        });
+                    }
+                }
             }
         },
 
@@ -426,6 +443,78 @@
         },
 
         isPointerLocked: function () { return !!document.pointerLockElement; },
+
+        // Browser-game pages are mostly ads and site chrome around a small
+        // canvas or iframe. Blow that element up to fill the screen and hide
+        // the rest - the "fullscreen" button games rarely provide.
+        focusGame: function () {
+            try {
+                if (state.focused) { return bridge.unfocusGame(); }
+                const candidates = [].slice.call(
+                    document.querySelectorAll('canvas, iframe, embed, object, video'));
+                let best = null;
+                let bestArea = 0;
+                for (const el of candidates) {
+                    const r = el.getBoundingClientRect();
+                    const area = r.width * r.height;
+                    if (area > bestArea && r.width > 120 && r.height > 90) {
+                        best = el;
+                        bestArea = area;
+                    }
+                }
+                if (!best) { return false; }
+                state.focused = {
+                    el: best,
+                    style: best.getAttribute('style'),
+                    rootOverflow: document.documentElement.style.overflow,
+                };
+                best.style.cssText += ';position:fixed !important;left:0 !important;' +
+                    'top:0 !important;width:100vw !important;height:100vh !important;' +
+                    'max-width:none !important;max-height:none !important;' +
+                    'margin:0 !important;z-index:2147483647 !important;' +
+                    'background:#000 !important;';
+                document.documentElement.style.overflow = 'hidden';
+                window.scrollTo(0, 0);
+                return true;
+            } catch (e) { return false; }
+        },
+
+        unfocusGame: function () {
+            try {
+                const focused = state.focused;
+                if (!focused) { return false; }
+                if (typeof focused.style === 'string') {
+                    focused.el.setAttribute('style', focused.style);
+                } else {
+                    focused.el.removeAttribute('style');
+                }
+                document.documentElement.style.overflow = focused.rootOverflow || '';
+                state.focused = null;
+                return true;
+            } catch (e) { return false; }
+        },
+
+        // Frame rate of the page's own animation loop, so it's possible to
+        // tell "this game runs badly" from "my connection is bad".
+        setFpsMeter: function (on) {
+            state.fpsWanted = !!on;
+            if (!on || state.fpsRunning || window.top !== window) { return; }
+            state.fpsRunning = true;
+            let frames = 0;
+            let last = performance.now();
+            const tick = function (now) {
+                frames++;
+                if (now - last >= 1000) {
+                    const fps = Math.round((frames * 1000) / (now - last));
+                    frames = 0;
+                    last = now;
+                    post({ type: 'fps', value: fps });
+                }
+                if (state.fpsWanted) { requestAnimationFrame(tick); }
+                else { state.fpsRunning = false; }
+            };
+            requestAnimationFrame(tick);
+        },
 
         // Viewport override, one mode at a time (same contract as iOS):
         //

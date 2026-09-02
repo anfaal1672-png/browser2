@@ -25,6 +25,16 @@ class JsBridge(context: Context, private val viewModel: BrowserViewModel) {
             when (type) {
                 "cursorstyle" -> viewModel.handleBridgeMessage("cursorstyle", obj.optString("style", "auto"))
                 "pointerlock" -> viewModel.pointerLocked = obj.optBoolean("locked", false)
+                "link" -> {
+                    val href = obj.optString("href")
+                    if (href.isNotEmpty()) {
+                        viewModel.linkTarget = BrowserViewModel.LinkTarget(
+                            url = href,
+                            text = obj.optString("text").ifEmpty { href },
+                        )
+                    }
+                }
+                "fps" -> viewModel.handleFpsReport(obj.optInt("value", 0))
                 "autofillFocus" -> viewModel.handleAutofillFocus(obj.optString("kind"))
                 "credentialSubmitted" -> viewModel.handleCredentialSubmitted(
                     obj.optString("username"),
