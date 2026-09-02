@@ -111,6 +111,13 @@ class Tab(val webView: WebView) {
     var pendingScrollX: Int? = null
     var pendingScrollY: Int? = null
 
+    /**
+     * Set when the desktop/mobile presentation changed while this tab was in
+     * the background: it reloads the next time it is shown, rather than every
+     * tab reloading at once behind the user's back.
+     */
+    var needsContentModeReload: Boolean = false
+
     /** Title for display in the tab switcher, falling back to the host like ContentView's TabCard. */
     val displayTitle: String
         get() {
@@ -186,6 +193,25 @@ class TabManager(
         return tab
     }
 
+    /**
+     * Switch every tab between the desktop and mobile presentation: the user
+     * agent goes out with the next request, and the page picks up the
+     * matching viewport override when it finishes loading.
+     */
+    fun applyContentMode() {
+        for (tab in tabs) {
+            tab.webView.settings.userAgentString =
+                if (viewModel.desktopMode) DESKTOP_USER_AGENT else null
+        }
+        for ((index, tab) in tabs.withIndex()) {
+            if (index == activeIndex) {
+                tab.webView.reload()
+            } else {
+                tab.needsContentModeReload = true
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView(webView: WebView, tab: Tab) {
         val settings: WebSettings = webView.settings
@@ -195,9 +221,15 @@ class TabManager(
         settings.loadWithOverviewMode = true
         settings.mediaPlaybackRequiresUserGesture = false
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-        settings.userAgentString = DESKTOP_USER_AGENT
-        settings.setSupportZoom(false)
-        settings.builtInZoomControls = false
+        // Follow the mode instead of pinning every tab to the desktop agent:
+        // phone mode was asking sites for their desktop build and then laying
+        // it out at device width, and toggling PC mode changed nothing at all.
+        settings.userAgentString = if (viewModel.desktopMode) DESKTOP_USER_AGENT else null
+        // A desktop-width layout on a phone is unreadable without zooming, so
+        // the page has to be zoomable (controls hidden -- pinch only).
+        settings.setSupportZoom(true)
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
         webView.setBackgroundColor(android.graphics.Color.BLACK)
 
         webView.addJavascriptInterface(JsBridge(context, viewModel), "AndroidBridge")
@@ -253,6 +285,12 @@ class TabManager(
 
                 // Only the currently active tab drives the visible toolbar state —
                 // a background tab finishing a load must not steal the address bar.
+                // Every tab needs the viewport override, active or not: it is
+                // what actually produces a PC-shaped layout on a page that
+                // pins itself to the device width.
+                view.evaluateJavascript(
+                    "window.__gb && __gb.setViewportMode('${viewModel.viewportMode}')", null)
+
                 if (tab === activeTab) {
                     viewModel.currentUrl = url
                     viewModel.urlText = url ?: ""
@@ -355,6 +393,10 @@ class TabManager(
         activeIndex = index
         val tab = tabs[index]
         tab.webView.onResume()
+        if (tab.needsContentModeReload) {
+            tab.needsContentModeReload = false
+            tab.webView.reload()
+        }
         viewModel.webView = tab.webView
 
         viewModel.pointerLocked = false

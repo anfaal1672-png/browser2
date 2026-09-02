@@ -188,14 +188,20 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var forceZoom: Bool {
         didSet {
             UserDefaults.standard.set(forceZoom, forKey: "forceZoom")
-            applyForceZoom()
+            applyViewportMode()
         }
     }
 
-    func applyForceZoom() {
+    /// Desktop presentation wins over the zoom override — it needs the
+    /// viewport for the wide layout, and a desktop-mode page can be pinched
+    /// anyway. Only one of the two ever patches the page.
+    func applyViewportMode(in target: WKWebView? = nil) {
         guard !tabs.isEmpty else { return }
-        webView.evaluateJavaScript(
-            "window.__gb && __gb.setForceZoom(\(forceZoom))", completionHandler: nil)
+        let mode = desktopMode ? "desktop" : (forceZoom ? "zoom" : "none")
+        // Defaults to the active tab; the page that just finished loading
+        // passes itself, since that may be a background tab.
+        (target ?? webView).evaluateJavaScript(
+            "window.__gb && __gb.setViewportMode('\(mode)')", completionHandler: nil)
     }
 
     /// Pinch handled by the trackpad overlay: in cursor mode the overlay takes
@@ -1238,10 +1244,39 @@ final class BrowserViewModel: NSObject, ObservableObject {
     @Published var desktopMode: Bool {
         didSet {
             UserDefaults.standard.set(desktopMode, forKey: "desktopMode")
-            for tab in tabs {
-                tab.webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
+            applyContentMode()
+        }
+    }
+
+    /// Switch every tab between the desktop and mobile presentation.
+    ///
+    /// This has to *re-navigate*, not reload. WebKit fixes a page's content
+    /// mode — and with it the layout viewport, 980pt wide for desktop instead
+    /// of the device's width — when the navigation that created the page
+    /// begins; reload() re-renders the page in the mode it already had. The
+    /// desktop user agent went out while the layout stayed phone-width, so a
+    /// responsive site kept serving and laying out its mobile design: turning
+    /// on PC mode visibly did nothing. The request also bypasses the cache,
+    /// since a server that already answered with mobile HTML would otherwise
+    /// just hand the same document back.
+    private func applyContentMode() {
+        for tab in tabs {
+            tab.webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
+        }
+        guard tabs.indices.contains(activeTabIndex) else { return }
+
+        // Background tabs re-navigate the next time they are shown, rather
+        // than all reloading at once behind the user's back.
+        for (index, tab) in tabs.enumerated() where index != activeTabIndex {
+            if let url = tab.webView.url, url.scheme == "http" || url.scheme == "https" {
+                tab.pendingLoad = url
             }
-            webView.reload()
+        }
+
+        if let url = webView.url, url.scheme == "http" || url.scheme == "https" {
+            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        } else {
+            webView.reload()   // the start page and about: pages have no URL to re-request
         }
     }
 
@@ -1812,7 +1847,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         config.preferences.isFraudulentWebsiteWarningEnabled = fraudWarning
         config.upgradeKnownHostsToHTTPS = httpsOnly
-        config.defaultWebpagePreferences.preferredContentMode = .desktop
+        // The first navigation in a new tab uses this, before the delegate
+        // below gets a say — hardcoding .desktop meant a new tab in phone mode
+        // laid its first page out as desktop and then switched on the next one.
+        config.defaultWebpagePreferences.preferredContentMode = desktopMode ? .desktop : .mobile
 
         let userScript = WKUserScript(
             source: InputBridge.script,
@@ -2460,7 +2498,7 @@ extension BrowserViewModel: WKNavigationDelegate, WKUIDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             self.applyKeyboardSuppression()
-            self.applyForceZoom()
+            self.applyViewportMode(in: webView)
             self.applyFPSMeter()
             // Only the tab on screen: a background tab finishing its load
             // says nothing about what the user is looking at.

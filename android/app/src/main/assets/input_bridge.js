@@ -23,6 +23,7 @@
         compTarget: null,   // element compLen applies to
         styleTarget: null,  // element the cursor style was last sampled from
         styleAt: 0,         // when that sample was taken (ms)
+        viewportPatched: false,   // we rewrote the page's viewport meta
     };
 
     function toPage(x, y) {
@@ -425,6 +426,59 @@
         },
 
         isPointerLocked: function () { return !!document.pointerLockElement; },
+
+        // Viewport override, one mode at a time (same contract as iOS):
+        //
+        //   'desktop' — lay the page out at a desktop width. WebView honours
+        //               the page's own viewport meta, so a site pinned to
+        //               width=device-width stayed phone-shaped even under the
+        //               desktop user agent: that is exactly "PC mode doesn't
+        //               give me the PC layout".
+        //   'zoom'    — keep the page's layout but allow pinching, for the
+        //               games that ship `user-scalable=no`.
+        //   'none'    — put back whatever the page shipped.
+        setViewportMode: function (mode) {
+            try {
+                if (window.top !== window) { return; }   // main frame only
+                let meta = document.querySelector('meta[name="viewport"]');
+
+                if (mode !== 'desktop' && mode !== 'zoom') {
+                    if (state.viewportPatched && meta) {
+                        if (state.originalViewport) {
+                            meta.setAttribute('content', state.originalViewport);
+                        } else {
+                            meta.remove();   // we added it ourselves
+                        }
+                    }
+                    state.viewportPatched = false;
+                    return;
+                }
+
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.setAttribute('name', 'viewport');
+                    (document.head || document.documentElement).appendChild(meta);
+                    if (typeof state.originalViewport !== 'string') {
+                        state.originalViewport = '';
+                    }
+                } else if (typeof state.originalViewport !== 'string') {
+                    state.originalViewport = meta.getAttribute('content') || '';
+                }
+
+                let content;
+                if (mode === 'desktop') {
+                    content = 'width=1024, user-scalable=yes, maximum-scale=5';
+                } else {
+                    content = (state.originalViewport || 'width=device-width, initial-scale=1')
+                        .replace(/,?\s*user-scalable\s*=\s*[^,]*/gi, '')
+                        .replace(/,?\s*maximum-scale\s*=\s*[^,]*/gi, '')
+                        .replace(/^\s*,\s*/, '')
+                        + ', user-scalable=yes, maximum-scale=5';
+                }
+                meta.setAttribute('content', content);
+                state.viewportPatched = true;
+            } catch (e) {}
+        },
     };
 
     window.__gb = bridge;

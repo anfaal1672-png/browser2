@@ -24,6 +24,7 @@ enum InputBridge {
             styleTarget: null,   // element the cursor style was last sampled from
             styleAt: 0,          // when that sample was taken (ms)
             focused: null,       // element blown up to fill the screen, if any
+            viewportPatched: false,   // we rewrote the page's viewport meta
             fpsWanted: false,    // FPS meter requested
             fpsRunning: false,   // its rAF loop is live
         };
@@ -731,33 +732,60 @@ enum InputBridge {
                 requestAnimationFrame(tick);
             },
 
-            // Most games ship `user-scalable=no`, which makes WebKit clamp the
-            // scroll view to a single zoom level — so pinch-to-zoom has nothing
-            // to zoom. Rewrite the viewport so the page can be scaled anyway,
-            // keeping the original around to restore when the setting is off.
-            setForceZoom: function (on) {
+            // Viewport override, one mode at a time:
+            //
+            //   'desktop' — lay the page out at a desktop width. WebKit's
+            //               desktop content mode normally does this and
+            //               ignores the page's own viewport meta, in which
+            //               case this is a no-op; it is the fallback for the
+            //               pages where that doesn't take, which is what "PC
+            //               mode, but the site is still shaped for a phone"
+            //               looks like.
+            //   'zoom'    — keep the page's layout but allow pinching. Most
+            //               games ship `user-scalable=no`, which makes WebKit
+            //               clamp the scroll view to one zoom level, leaving
+            //               pinch-to-zoom nothing to zoom.
+            //   'none'    — put back whatever the page shipped.
+            setViewportMode: function (mode) {
                 try {
                     if (window.top !== window) { return; }   // main frame only
                     let meta = document.querySelector('meta[name="viewport"]');
-                    if (!on) {
-                        if (meta && typeof state.originalViewport === 'string') {
-                            meta.setAttribute('content', state.originalViewport);
+
+                    if (mode !== 'desktop' && mode !== 'zoom') {
+                        if (state.viewportPatched && meta) {
+                            if (state.originalViewport) {
+                                meta.setAttribute('content', state.originalViewport);
+                            } else {
+                                meta.remove();   // we added it ourselves
+                            }
                         }
+                        state.viewportPatched = false;
                         return;
                     }
+
                     if (!meta) {
                         meta = document.createElement('meta');
                         meta.setAttribute('name', 'viewport');
                         (document.head || document.documentElement).appendChild(meta);
-                        state.originalViewport = '';
+                        if (typeof state.originalViewport !== 'string') {
+                            state.originalViewport = '';
+                        }
                     } else if (typeof state.originalViewport !== 'string') {
                         state.originalViewport = meta.getAttribute('content') || '';
                     }
-                    const base = (state.originalViewport || 'width=device-width, initial-scale=1')
-                        .replace(/,?\s*user-scalable\s*=\s*[^,]*/gi, '')
-                        .replace(/,?\s*maximum-scale\s*=\s*[^,]*/gi, '')
-                        .replace(/^\s*,\s*/, '');
-                    meta.setAttribute('content', base + ', user-scalable=yes, maximum-scale=5');
+
+                    let content;
+                    if (mode === 'desktop') {
+                        content = 'width=1024, user-scalable=yes, maximum-scale=5';
+                    } else {
+                        content = (state.originalViewport || 'width=device-width, initial-scale=1')
+                            .replace(/,?\s*user-scalable\s*=\s*[^,]*/gi, '')
+                            .replace(/,?\s*maximum-scale\s*=\s*[^,]*/gi, '')
+                            .replace(/^\s*,\s*/, '')
+                            + ', user-scalable=yes, maximum-scale=5';
+                    }
+                    meta.setAttribute('content', content);
+                    state.viewportPatched = true;
                 } catch (e) {}
             },
         };

@@ -214,8 +214,23 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         get() = desktopModeBacking
         set(value) {
             desktopModeBacking = value
-            webView?.reload()
+            // Reloading alone changed nothing: the user agent was pinned to
+            // the desktop one for every tab regardless, and the page's own
+            // viewport meta kept the layout at device width.
+            tabManager.applyContentMode()
+            applyViewportMode()
         }
+
+    /**
+     * Which viewport override the pages should be running, mirroring
+     * BrowserViewModel.swift. `desktop` is what actually produces a PC-shaped
+     * layout on a page that pins itself to the device width.
+     */
+    val viewportMode: String get() = if (desktopMode) "desktop" else "zoom"
+
+    fun applyViewportMode() {
+        webView?.evaluateJavascript("window.__gb && __gb.setViewportMode('$viewportMode')", null)
+    }
 
     private var adBlockEnabledBacking: Boolean by PersistedBoolean(prefs, "adBlockEnabled", true)
     var adBlockEnabled: Boolean
