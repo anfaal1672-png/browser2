@@ -1237,6 +1237,31 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             </a>
             """.trimIndent()
         }
+        // Recently visited sites, newest first and one entry per host, so the
+        // game you were playing yesterday is one tap away.
+        val seenHosts = mutableSetOf<String>()
+        val recents = history.asReversed().mapNotNull { entry ->
+            val host = try { Uri.parse(entry.url).host } catch (e: Exception) { null }
+            if (host.isNullOrEmpty() || host in seenHosts) return@mapNotNull null
+            if (bookmarks.any { it.url == entry.url }) return@mapNotNull null
+            seenHosts.add(host)
+            """
+            <a class="chip" href="${htmlEscape(entry.url)}">
+              <img src="https://www.google.com/s2/favicons?domain=${htmlEscape(host)}&sz=32" onerror="this.remove()" alt="">
+              <span>${htmlEscape(host)}</span>
+            </a>
+            """.trimIndent()
+        }.take(8).joinToString("")
+
+        val recentSection = if (recents.isEmpty()) {
+            ""
+        } else {
+            """
+            <div class="section">${loc("最近開いたサイト", "Recently visited")}</div>
+            <div class="chips">$recents</div>
+            """.trimIndent()
+        }
+
         return """
         <!DOCTYPE html><html><head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1261,10 +1286,20 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
           .icon img { width:28px; height:28px; position:absolute; }
           .name { font-size:12px; max-width:100%; overflow:hidden;
                   text-overflow:ellipsis; white-space:nowrap; }
+          .section { width:100%; max-width:560px; margin:30px 0 12px; font-size:12px;
+                     font-weight:600; letter-spacing:.4px; color:#7b8794; }
+          .chips { display:flex; flex-wrap:wrap; gap:8px; width:100%; max-width:560px; }
+          .chip { display:flex; align-items:center; gap:7px; padding:8px 12px;
+                  border-radius:999px; background:#141b23; border:1px solid #1f2937;
+                  text-decoration:none; color:#c7d2dd; font-size:12px; max-width:100%; }
+          .chip:active { background:#1d2733; }
+          .chip img { width:16px; height:16px; border-radius:4px; }
+          .chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         </style></head><body>
         <h1>GameBrowser</h1>
         <p class="sub">${loc("ブックマークから開く、または上のバーで検索", "Open a bookmark, or search using the bar above")}</p>
         <div class="grid">$tiles</div>
+        $recentSection
         </body></html>
         """.trimIndent()
     }

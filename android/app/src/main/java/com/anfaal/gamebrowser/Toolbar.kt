@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -509,6 +511,21 @@ fun ControlBar(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
             ControlButton(loc("スティック", "Stick"), active = viewModel.joystickVisible, accent = accent) {
                 viewModel.joystickVisible = !viewModel.joystickVisible
             }
+            // Tap: show/hide the custom pad. Long press: open the editor.
+            ControlButton(
+                loc("パッド", "Pads"),
+                active = viewModel.padVisible,
+                accent = accent,
+                onLongClick = {
+                    viewModel.hapticMedium()
+                    viewModel.showProfiles = true
+                },
+            ) {
+                viewModel.padVisible = !viewModel.padVisible
+                if (viewModel.padVisible && viewModel.activeProfile == null) {
+                    viewModel.showProfiles = true
+                }
+            }
             ControlButton(loc("キーボード", "Keys"), active = viewModel.keyboardVisible, accent = accent) {
                 viewModel.keyboardVisible = !viewModel.keyboardVisible
             }
@@ -603,19 +620,25 @@ fun FindBar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ControlButton(
     label: String,
     active: Boolean,
     accent: Color,
     enabled: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(GB.Radius.small))
             .background(if (active) accent.copy(alpha = 0.18f) else Color.Transparent)
-            .clickable(enabled = enabled, onClick = onClick)
+            .combinedClickable(
+                enabled = enabled,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
             .padding(horizontal = GB.Space.s, vertical = GB.Space.xs),
     ) {
         Text(
