@@ -55,6 +55,9 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(.dark)
+        // The window override follows @AppStorage on its own; the open web
+        // views have their own explicit style and have to be told.
+        .onChange(of: appTheme) { _, _ in viewModel.applyInterfaceStyle() }
         .sheet(isPresented: $showCardEditor) { cardEditor }
         .alert(loc("すべての設定をリセットしますか?", "Reset all settings?"),
                isPresented: $confirmResetAll) {

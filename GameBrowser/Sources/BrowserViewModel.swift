@@ -1868,6 +1868,33 @@ final class BrowserViewModel: NSObject, ObservableObject {
         privateDataStore = WKWebsiteDataStore.nonPersistent()
     }
 
+    // MARK: - Appearance
+
+    /// The interface style the page itself should render against.
+    ///
+    /// This used to be left to the window. `.preferredColorScheme` sets the
+    /// window's override after the scene's first layout, but tabs are created
+    /// and start loading from this class's initialiser — before a window
+    /// exists at all. The first page of a cold start therefore answered
+    /// `prefers-color-scheme` from the device's setting rather than the app's,
+    /// and only a later navigation came out right, which is why switching to
+    /// PC mode (which re-navigates every tab) appeared to be what fixed it.
+    /// Setting it on the web view takes the window out of the picture.
+    var webInterfaceStyle: UIUserInterfaceStyle {
+        switch UserDefaults.standard.object(forKey: "appTheme") as? Int ?? Default.appTheme {
+        case 1: return .light
+        case 2: return .unspecified   // follow the device
+        default: return .dark
+        }
+    }
+
+    /// Re-apply after the setting changes. The media query re-evaluates on a
+    /// trait change by itself, so nothing needs reloading.
+    func applyInterfaceStyle() {
+        let style = webInterfaceStyle
+        for tab in tabs { tab.webView.overrideUserInterfaceStyle = style }
+    }
+
     private func makeWebView(isPrivate: Bool = false) -> WKWebView {
         let config = WKWebViewConfiguration()
         // Cookies, storage and caches live only in memory for a private tab
@@ -1892,6 +1919,7 @@ final class BrowserViewModel: NSObject, ObservableObject {
         config.userContentController.add(ScriptMessageProxy(self), name: "gbEvents")
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.overrideUserInterfaceStyle = webInterfaceStyle
         webView.customUserAgent = desktopMode ? Self.desktopUserAgent : nil
         webView.allowsBackForwardNavigationGestures = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never
