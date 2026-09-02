@@ -38,12 +38,12 @@ fun CredentialSavePrompt(viewModel: BrowserViewModel, modifier: Modifier = Modif
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.85f))
+            .background(GB.bgDeep.copy(alpha = 0.9f))
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(Icons.Filled.Key, contentDescription = null, tint = Color.Cyan, modifier = Modifier.height(16.dp))
+        Icon(Icons.Filled.Key, contentDescription = null, tint = GB.accent, modifier = Modifier.height(16.dp))
         Text(
             loc("パスワードを保存しますか?", "Save this password?"),
             color = Color.White,
@@ -51,8 +51,8 @@ fun CredentialSavePrompt(viewModel: BrowserViewModel, modifier: Modifier = Modif
             fontWeight = FontWeight.Medium,
             modifier = Modifier.weight(1f),
         )
-        TextAction(loc("保存", "Save"), Color.Cyan) { viewModel.savePendingCredential() }
-        TextAction(loc("しない", "Never"), Color.White.copy(alpha = 0.6f)) { viewModel.pendingCredential = null }
+        TextAction(loc("保存", "Save"), GB.accent) { viewModel.savePendingCredential() }
+        TextAction(loc("しない", "Never"), GB.textDim) { viewModel.pendingCredential = null }
     }
 }
 
@@ -79,7 +79,7 @@ fun AutofillBar(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.85f))
+            .background(GB.bgDeep.copy(alpha = 0.9f))
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -114,7 +114,7 @@ fun AutofillBar(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
             Icon(
                 Icons.Filled.Close,
                 contentDescription = "Dismiss",
-                tint = Color.White.copy(alpha = 0.6f),
+                tint = GB.textDim,
                 modifier = Modifier.height(16.dp),
             )
         }
@@ -126,7 +126,7 @@ private fun SuggestionChip(label: String, icon: ImageVector, onClick: () -> Unit
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(Color.Cyan.copy(alpha = 0.22f))
+            .background(GB.accent.copy(alpha = 0.22f))
             .pointerInput(label) { detectTapGestures(onTap = { onClick() }) }
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,

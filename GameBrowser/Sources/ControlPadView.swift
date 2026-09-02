@@ -171,10 +171,10 @@ struct PadEditBar: View {
                     .foregroundStyle(.black)
                     .padding(.horizontal, 14)
                     .frame(height: 30)
-                    .background(Color.cyan, in: Capsule())
+                    .background(GB.accent, in: Capsule())
             }
         }
-        .tint(.cyan)
+        .tint(GB.accent)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
@@ -225,7 +225,7 @@ struct PadButtonInspector: View {
                 .foregroundStyle(.white)
             Spacer()
             Button(loc("完了", "Done")) { dismiss() }
-                .foregroundStyle(.cyan)
+                .foregroundStyle(GB.accent)
         }
     }
 
@@ -247,7 +247,7 @@ struct PadButtonInspector: View {
                         .foregroundStyle(.black)
                         .padding(.horizontal, 10)
                         .frame(height: 30)
-                        .background(Color.cyan, in: Capsule())
+                        .background(GB.accent, in: Capsule())
                     }
                 }
                 if currentNames(button).isEmpty {
@@ -317,10 +317,10 @@ struct PadButtonInspector: View {
                     ),
                     in: 36...110, step: 2
                 )
-                .tint(.cyan)
+                .tint(GB.accent)
                 Text("\(Int(button.size))")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(GB.accent)
             }
 
             HStack(spacing: 8) {
@@ -351,7 +351,7 @@ struct PadButtonInspector: View {
             ))
             .font(.system(size: 14))
             .foregroundStyle(.white)
-            .tint(.cyan)
+            .tint(GB.accent)
 
             Toggle(loc("連打(ターボ)", "Turbo (auto-repeat)"), isOn: Binding(
                 get: { button.turbo },
@@ -359,7 +359,7 @@ struct PadButtonInspector: View {
             ))
             .font(.system(size: 14))
             .foregroundStyle(.white)
-            .tint(.cyan)
+            .tint(GB.accent)
         }
     }
 

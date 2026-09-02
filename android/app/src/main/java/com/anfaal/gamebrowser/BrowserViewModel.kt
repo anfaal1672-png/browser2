@@ -276,6 +276,19 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         // Compose joystick (not yet ported) will read/write its own offset.
     }
 
+    /** True while the tab on screen is a private one. */
+    val isPrivateTab: Boolean
+        get() = tabManager.activeTab?.isPrivate == true
+
+    /** How many private tabs are open, for the badge in the tab switcher. */
+    val privateTabCount: Int
+        get() = tabManager.tabs.count { it.isPrivate }
+
+    /** Opens a new private tab and switches to it. */
+    fun newPrivateTab() {
+        tabManager.newTab(isPrivate = true)
+    }
+
     fun goHome() {
         webView?.loadUrl("https://www.google.com")
     }
@@ -342,7 +355,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun handleCredentialSubmitted(username: String, password: String) {
-        if (!autofillEnabled || password.isEmpty() || currentHost.isEmpty()) return
+        // A private tab never offers to save what was typed into it.
+        if (!autofillEnabled || isPrivateTab || password.isEmpty() || currentHost.isEmpty()) return
         val alreadySaved = credentials.any {
             it.domain == currentHost && it.username == username && it.password == password
         }

@@ -309,7 +309,7 @@ private fun FloatingButton(icon: androidx.compose.ui.graphics.vector.ImageVector
         contentAlignment = Alignment.Center,
     ) {
         IconButton(onClick = onClick) {
-            Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = 0.9f))
+            Icon(icon, contentDescription = null, tint = GB.text.copy(alpha = 0.9f))
         }
     }
 }
@@ -320,7 +320,7 @@ private fun LockScreen(onUnlockClick: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.94f)),
+            .background(GB.background),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {

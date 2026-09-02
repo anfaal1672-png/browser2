@@ -71,6 +71,6 @@ private fun ScrollRepeatButton(icon: ImageVector, onPress: () -> Unit, onRelease
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = 0.9f))
+        Icon(icon, contentDescription = null, tint = GB.text.copy(alpha = 0.9f))
     }
 }

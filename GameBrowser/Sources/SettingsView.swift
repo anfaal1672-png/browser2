@@ -17,7 +17,7 @@ struct SettingsView: View {
     @State private var recentlyReset: String?
     @State private var confirmResetAll = false
 
-    private let accent = Color.cyan
+    private let accent = GB.accent
 
     var body: some View {
         ZStack {
@@ -87,7 +87,7 @@ struct SettingsView: View {
     // MARK: - Cards
 
     private var browserModeCard: some View {
-        card(icon: "gamecontroller.fill", tint: .cyan, title: loc("ブラウザモード", "Browser mode"),
+        card(icon: "gamecontroller.fill", tint: GB.accent, title: loc("ブラウザモード", "Browser mode"),
              reset: .browserMode) {
             HStack(spacing: 10) {
                 modeButton(label: loc("スマホ", "Phone"), icon: "hand.tap.fill", selected: !viewModel.pcMode) {
@@ -563,9 +563,9 @@ private func sliderRow(title: String, value: Binding<Double>,
             Spacer()
             Text(display)
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundStyle(.cyan)
+                .foregroundStyle(GB.accent)
         }
         Slider(value: value, in: range, step: step)
-            .tint(.cyan)
+            .tint(GB.accent)
     }
 }

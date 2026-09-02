@@ -138,28 +138,27 @@ private fun trackingLevelLabel(level: Int): String = when (level) {
 }
 
 // ----------------------------------------------------------------------------
-// Palette. Accent matches the cyan already used elsewhere in this port
-// (Toolbar.kt's progress bar/cursor color, TabsScreen.kt's active-tab border) —
-// plain Compose Color.Cyan, not a hand-picked iOS system-color hex, to stay
-// consistent with the rest of this codebase. The card-icon tints below are
-// standard Material Design palette colors (Blue/Orange/Purple/... 500), one
-// per card, mirroring the distinct SwiftUI system-color tint each card icon
-// uses in SettingsView.swift.
+// Palette. Everything structural comes from Theme.kt's GB tokens, so this
+// screen cannot drift from the rest of the app. The per-card icon tints are
+// the iOS dark-mode system colours SettingsView.swift names (.blue, .orange,
+// .purple, ...) rather than the Material palette, so the two settings screens
+// are the same screen rather than two takes on one.
 // ----------------------------------------------------------------------------
 
-private val Accent = Color.Cyan
-private val TintBlue = Color(0xFF2196F3)
-private val TintOrange = Color(0xFFFF9800)
-private val TintPurple = Color(0xFF9C27B0)
-private val TintYellow = Color(0xFFFFC107)
-private val TintGreen = Color(0xFF4CAF50)
-private val TintTeal = Color(0xFF009688)
-private val TintRed = Color(0xFFF44336)
-private val TintPink = Color(0xFFE91E63)
-private val TintIndigo = Color(0xFF3F51B5)
+private val Accent = GB.accent
+private val TintBlue = Color(0xFF0A84FF)
+private val TintOrange = Color(0xFFFF9F0A)
+private val TintPurple = Color(0xFFBF5AF2)
+private val TintYellow = Color(0xFFFFD60A)
+private val TintGreen = Color(0xFF30D158)
+private val TintTeal = Color(0xFF40C8E0)
+private val TintRed = Color(0xFFFF453A)
+private val TintPink = Color(0xFFFF375F)
+private val TintIndigo = Color(0xFF5E5CE6)
+private val TintGray = Color(0xFF8E8E93)
 
-private val BackgroundTop = Color(0xFF0D121A)
-private val BackgroundBottom = Color(0xFF05080D)
+private val BackgroundTop = GB.bg
+private val BackgroundBottom = GB.bgDeep
 
 /**
  * Custom-designed settings screen: dark surface cards with tinted section
@@ -230,12 +229,12 @@ private fun SettingsHeader(onDismiss: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(loc("設定", "Settings"), color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text(loc("設定", "Settings"), style = GB.Type.title)
         Box(
             modifier = Modifier
                 .size(32.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.1f))
+                .background(GB.surfaceHigh)
                 .clickable(onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {
@@ -713,8 +712,8 @@ private fun SettingsCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(Color.White.copy(alpha = 0.06f))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+            .background(GB.surface)
+            .border(1.dp, GB.border, RoundedCornerShape(GB.Radius.large))
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -736,7 +735,7 @@ private fun SettingsCard(
 
 @Composable
 private fun SettingsDivider() {
-    HorizontalDivider(color = Color.White.copy(alpha = 0.08f), thickness = 1.dp)
+    HorizontalDivider(color = GB.border, thickness = 1.dp)
 }
 
 @Composable

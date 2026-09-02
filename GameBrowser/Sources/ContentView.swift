@@ -456,7 +456,7 @@ struct ContentView: View {
                     // completely invisible.
                     if viewModel.activeDownloads > 0 {
                         Circle()
-                            .fill(Color.cyan)
+                            .fill(GB.accent)
                             .frame(width: 7, height: 7)
                             .offset(x: 3, y: -2)
                     }
@@ -566,7 +566,7 @@ struct ContentView: View {
         HStack(spacing: 10) {
             Image(systemName: "key.fill")
                 .font(.system(size: 13))
-                .foregroundStyle(.cyan)
+                .foregroundStyle(GB.accent)
             Text(loc("パスワードを保存しますか?", "Save this password?"))
                 .font(.system(size: 13, weight: .medium))
             Spacer()
@@ -596,7 +596,7 @@ struct ContentView: View {
                                 .lineLimit(1)
                                 .padding(.horizontal, 10)
                                 .frame(height: 30)
-                                .background(Color.cyan.opacity(0.22), in: Capsule())
+                                .background(GB.accent.opacity(0.22), in: Capsule())
                         }
                     }
                     if viewModel.cardSuggestionVisible {
@@ -607,7 +607,7 @@ struct ContentView: View {
                                 .font(.system(size: 13, weight: .medium))
                                 .padding(.horizontal, 10)
                                 .frame(height: 30)
-                                .background(Color.cyan.opacity(0.22), in: Capsule())
+                                .background(GB.accent.opacity(0.22), in: Capsule())
                         }
                     }
                 }
@@ -816,12 +816,12 @@ struct ContentView: View {
                 Text(label)
                     .font(.system(size: 9, weight: .medium))
             }
-            .foregroundStyle(active ? Color.cyan : Color.white.opacity(0.85))
+            .foregroundStyle(active ? GB.accent : GB.text.opacity(0.85))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.cyan.opacity(active ? 0.14 : 0))
+                    .fill(GB.accent.opacity(active ? 0.14 : 0))
                     .padding(.horizontal, 3)
             )
         }

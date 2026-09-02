@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.view.ViewGroup
+import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -17,6 +18,9 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.webkit.ProfileStore
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,6 +39,9 @@ private const val DEFAULT_HOME_URL = "https://www.google.com"
 
 /** Persisted stand-in URL for a tab showing the local start page (which WebView reports as a blank/no URL). Mirrors BrowserViewModel.swift's `startPageMarker`. */
 private const val START_PAGE_MARKER = "gamebrowser://start"
+
+/** Name of the WebView profile private tabs run in; deleted with the last one. */
+private const val PRIVATE_PROFILE = "gamebrowser-private"
 
 /** How long to wait after a page finishes loading before restoring its saved scroll offset. */
 private const val SCROLL_RESTORE_DELAY_MS = 600L
@@ -75,8 +82,13 @@ private fun notificationBridgeScript(context: Context): String {
  * Only [TabManager] should construct these (via its internal `createTab()`),
  * so that the WebView is always fully configured (JS bridge, clients, etc.)
  * before it's used.
+ *
+ * [isPrivate] tabs leave nothing behind locally: no history, no saved
+ * passwords, no session restore, no thumbnail on disk, and - where the
+ * installed WebView supports profiles - their own cookie jar and storage,
+ * thrown away with the last private tab.
  */
-class Tab(val webView: WebView) {
+class Tab(val webView: WebView, val isPrivate: Boolean = false) {
     companion object {
         private var nextId = 0
     }
@@ -163,6 +175,9 @@ class TabManager(
 
     /** -1 until the first tab is selected (during [restoreTabs] / the initial [newTab]). */
     var activeIndex: Int by mutableStateOf(-1)
+
+    /** True once a private tab has taken the private profile, so it is only deleted if it exists. */
+    private var privateProfileInUse = false
         private set
 
     val activeTab: Tab? get() = tabs.getOrNull(activeIndex)
@@ -186,11 +201,52 @@ class TabManager(
 
     // MARK: - Tab creation
 
-    private fun createTab(): Tab {
+    private fun createTab(isPrivate: Boolean = false): Tab {
         val webView = WebView(context)
-        val tab = Tab(webView)
+        // The profile has to be set before the WebView loads anything, so this
+        // comes ahead of configureWebView and any loadUrl.
+        if (isPrivate) attachPrivateProfile(webView)
+        val tab = Tab(webView, isPrivate = isPrivate)
         configureWebView(webView, tab)
         return tab
+    }
+
+    /**
+     * Cookies, storage and cache for private tabs, kept out of the normal
+     * profile. WebView's multi-profile support is the Android counterpart of
+     * iOS's `WKWebsiteDataStore.nonPersistent()`: a named profile with its own
+     * cookie jar and storage, deleted outright once the last private tab
+     * closes.
+     *
+     * Older WebView builds have no profiles. There, private tabs still keep
+     * nothing locally - no history, no saved passwords, no session restore, no
+     * thumbnail on disk, and nothing cached - but they do share the normal
+     * cookie jar, which is a platform limit rather than a choice.
+     */
+    private fun attachPrivateProfile(webView: WebView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) return
+        try {
+            ProfileStore.getInstance().getOrCreateProfile(PRIVATE_PROFILE)
+            WebViewCompat.setProfile(webView, PRIVATE_PROFILE)
+            privateProfileInUse = true
+        } catch (e: Exception) {
+            // A WebView that will not take a profile just runs in the default
+            // one; the local-record guarantees above still hold.
+        }
+    }
+
+    /** Throws the private profile away once no private tab is left. */
+    private fun endPrivateSessionIfEmpty() {
+        if (tabs.any { it.isPrivate }) return
+        if (!privateProfileInUse) return
+        privateProfileInUse = false
+        try {
+            ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE)
+        } catch (e: Exception) {
+            // Deleting fails while any WebView still holds the profile; the
+            // next close tries again, and the data never reaches the normal
+            // profile either way.
+        }
     }
 
     /**
@@ -230,6 +286,13 @@ class TabManager(
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
+        if (tab.isPrivate) {
+            // Nothing from a private tab should survive it on disk. The profile
+            // above covers cookies and storage where it is available; this
+            // covers the HTTP cache either way.
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
+            CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false)
+        }
         webView.setBackgroundColor(android.graphics.Color.BLACK)
 
         webView.addJavascriptInterface(JsBridge(context, viewModel), "AndroidBridge")
@@ -279,7 +342,7 @@ class TabManager(
                 tab.canGoForward = view.canGoForward()
                 tab.pendingUrl = null
 
-                if (!tab.isStartPage && url != null) {
+                if (!tab.isStartPage && url != null && !tab.isPrivate) {
                     viewModel.recordHistory(url, tab.title)
                 }
 
@@ -350,9 +413,12 @@ class TabManager(
 
     // MARK: - Tabs: create / select / close
 
-    fun newTab(url: String? = null) {
-        val tab = createTab()
-        val useStartPage = url == null && viewModel.newTabPage == NewTabPage.START_PAGE
+    fun newTab(url: String? = null, isPrivate: Boolean = false) {
+        val tab = createTab(isPrivate = isPrivate)
+        // A private tab skips the bookmark start page: those tiles are built
+        // from saved bookmarks and recently visited sites, which is the one
+        // thing a private tab should not open with.
+        val useStartPage = url == null && viewModel.newTabPage == NewTabPage.START_PAGE && !isPrivate
         if (useStartPage) {
             tab.isStartPage = true
             _tabs.add(tab)
@@ -455,6 +521,7 @@ class TabManager(
             }
             // else: a tab after the active one closed - activeIndex unaffected.
         }
+        endPrivateSessionIfEmpty()
         saveTabs()
     }
 
@@ -488,7 +555,7 @@ class TabManager(
     /** Persist thumbnails so the tab switcher isn't blank after a relaunch. */
     private fun saveSnapshots() {
         val dir = snapshotsDir()
-        val images = tabs.map { it.snapshot }
+        val images = persistedTabs().map { it.snapshot }
         scope.launch(Dispatchers.IO) {
             images.forEachIndexed { i, bitmap ->
                 if (bitmap == null) return@forEachIndexed
@@ -525,10 +592,33 @@ class TabManager(
         }
     }
 
+    /**
+     * The tabs that go to disk. Private tabs are deliberately absent: a
+     * relaunch must not bring one back, so neither tabs.json nor the thumbnail
+     * files know about them. Both writers index the same filtered list, which
+     * is what keeps `<i>.jpg` lined up with entry `i` on restore.
+     */
+    private fun persistedTabs(): List<Tab> = tabs.filter { !it.isPrivate }
+
+    /**
+     * [activeIndex] renumbered against [persistedTabs]. A private tab has no
+     * saved slot of its own, so the last ordinary tab before it is restored
+     * instead of some unrelated page.
+     */
+    private fun persistedActiveIndex(): Int {
+        if (activeIndex < 0) return 0
+        var mapped = -1
+        for ((index, tab) in tabs.withIndex()) {
+            if (!tab.isPrivate) mapped += 1
+            if (index == activeIndex) break
+        }
+        return max(mapped, 0)
+    }
+
     /** Persists every tab's URL + scroll offset + the active index, then re-saves thumbnails. */
     fun saveTabs() {
         val array = JSONArray()
-        for (tab in tabs) {
+        for (tab in persistedTabs()) {
             val liveUrl = tab.webView.url
             val urlString = if (tab.isStartPage) {
                 START_PAGE_MARKER
@@ -547,7 +637,7 @@ class TabManager(
         }
         val root = JSONObject()
         root.put("tabs", array)
-        root.put("activeIndex", activeIndex)
+        root.put("activeIndex", persistedActiveIndex())
 
         scope.launch(Dispatchers.IO) {
             try {

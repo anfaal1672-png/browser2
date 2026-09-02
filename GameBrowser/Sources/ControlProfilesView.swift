@@ -12,7 +12,7 @@ struct ControlProfilesView: View {
     /// Short confirmation shown after copy/paste.
     @State private var note: String?
 
-    private let accent = Color.cyan
+    private let accent = GB.accent
 
     var body: some View {
         ZStack {
@@ -76,7 +76,7 @@ struct ControlProfilesView: View {
     // MARK: - Profiles
 
     private var profilesCard: some View {
-        card(icon: "square.stack.3d.up.fill", tint: .cyan,
+        card(icon: "square.stack.3d.up.fill", tint: GB.accent,
              title: loc("プロファイル", "Profiles")) {
             ForEach(viewModel.profiles) { profile in
                 HStack(spacing: 10) {

@@ -173,8 +173,8 @@ struct VirtualKeyboardView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 10)
                 .frame(height: 30)
-                .background(Color.cyan.opacity(0.22), in: Capsule())
-                .overlay(Capsule().stroke(Color.cyan.opacity(0.4), lineWidth: 0.5))
+                .background(GB.accent.opacity(0.22), in: Capsule())
+                .overlay(Capsule().stroke(GB.accent.opacity(0.4), lineWidth: 0.5))
         }
     }
 
@@ -187,15 +187,15 @@ struct VirtualKeyboardView: View {
         } label: {
             Text("あ")
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(viewModel.imeActive ? Color.black : Color.cyan)
+                .foregroundStyle(viewModel.imeActive ? GB.bgDeep : GB.accent)
                 .frame(width: 40, height: 40)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(viewModel.imeActive ? Color.cyan : Color.white.opacity(0.14))
+                        .fill(viewModel.imeActive ? GB.accent : GB.surfaceHigh)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.cyan.opacity(0.5), lineWidth: 0.5)
+                        .stroke(GB.accent.opacity(0.5), lineWidth: 0.5)
                 )
         }
     }
@@ -228,16 +228,16 @@ struct KeyButton: View {
     var body: some View {
         Text(key.label)
             .font(.system(size: 15, weight: .semibold, design: .rounded))
-            .foregroundStyle(isActive ? Color.black : Color.white)
+            .foregroundStyle(isActive ? GB.bgDeep : GB.text)
             .frame(width: flexible ? nil : (width ?? 40), height: 40)
             .frame(maxWidth: flexible ? .infinity : nil)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(isActive ? Color.white : Color.white.opacity(0.14))
+                    .fill(isActive ? GB.text : GB.surfaceHigh)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.white.opacity(0.25), lineWidth: 0.5)
+                    .stroke(GB.borderStrong, lineWidth: 0.5)
             )
             .scaleEffect(isActive ? 0.93 : 1.0)
             .animation(.easeOut(duration: 0.08), value: isActive)

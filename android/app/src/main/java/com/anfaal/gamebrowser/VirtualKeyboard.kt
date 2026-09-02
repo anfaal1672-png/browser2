@@ -46,7 +46,7 @@ import kotlinx.coroutines.launch
 fun VirtualKeyboardHost(viewModel: BrowserViewModel, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.75f))
+            .background(GB.bgDeep.copy(alpha = 0.9f))
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -93,7 +93,7 @@ private fun ImeBar(viewModel: BrowserViewModel) {
             Icon(
                 Icons.Filled.Close,
                 contentDescription = "Close IME",
-                tint = Color.White.copy(alpha = 0.6f),
+                tint = GB.textDim,
                 modifier = Modifier.width(16.dp),
             )
         }
@@ -105,11 +105,11 @@ private fun CandidateChip(text: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(Color.Cyan.copy(alpha = 0.22f))
+            .background(GB.accent.copy(alpha = 0.22f))
             .pointerInput(text) { detectTapGestures(onTap = { onClick() }) }
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
-        Text(text, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Text(text, color = GB.text, fontSize = 14.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -143,7 +143,7 @@ fun KeyButton(
             .let { if (flexible) it else it.width(width) }
             .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(if (isActive) Color.White else Color.White.copy(alpha = 0.14f))
+            .background(if (isActive) GB.text else GB.surfaceHigh)
             .pointerInput(key, sticky) {
                 detectTapGestures(
                     onPress = {
@@ -213,7 +213,7 @@ private fun ImeToggleKey(viewModel: BrowserViewModel) {
             .width(40.dp)
             .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(if (viewModel.imeActive) Color.Cyan else Color.White.copy(alpha = 0.14f))
+            .background(if (viewModel.imeActive) GB.accent else GB.surfaceHigh)
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
@@ -227,7 +227,7 @@ private fun ImeToggleKey(viewModel: BrowserViewModel) {
     ) {
         Text(
             "あ",
-            color = if (viewModel.imeActive) Color.Black else Color.Cyan,
+            color = if (viewModel.imeActive) GB.bgDeep else GB.accent,
             fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
         )

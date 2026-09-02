@@ -63,7 +63,7 @@ fun HighlightButton(viewModel: BrowserViewModel, modifier: Modifier = Modifier) 
     val targetColor = when (state) {
         HighlightSaveState.Saved -> Color(0xFF34C759) // iOS-green
         HighlightSaveState.Failed -> Color(0xFFFF3B30) // iOS-red
-        else -> Color.White.copy(alpha = 0.9f)
+        else -> GB.text.copy(alpha = 0.9f)
     }
     // Mirrors iOS's `.animation(.easeInOut(0.2), value: highlightSaveState)`.
     val tint by animateColorAsState(targetValue = targetColor, label = "highlightTint")
@@ -80,7 +80,7 @@ fun HighlightButton(viewModel: BrowserViewModel, modifier: Modifier = Modifier) 
             .padding(10.dp)
             .height(30.dp)
             .background(Color.Black.copy(alpha = 0.45f), CircleShape)
-            .border(0.5.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+            .border(0.5.dp, GB.borderStrong, CircleShape)
             // iOS disables the button while saving; drop the click handler then.
             .clickable(enabled = !saving) { viewModel.saveHighlight() }
             .padding(horizontal = if (state == HighlightSaveState.Idle) 9.dp else 11.dp),

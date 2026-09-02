@@ -90,6 +90,9 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.fragment:fragment-ktx:1.8.4")
+    // Multi-profile WebView, which is what gives private tabs their own cookie
+    // jar and storage - the Android counterpart of WKWebsiteDataStore.nonPersistent().
+    implementation("androidx.webkit:webkit:1.12.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
