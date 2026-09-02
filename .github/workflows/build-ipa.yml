@@ -44,6 +44,10 @@ jobs:
     needs: quick-check
     runs-on: macos-14
     timeout-minutes: 30
+    # Needed to publish the rolling release below; the default token is
+    # read-only.
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -85,3 +89,30 @@ jobs:
             dist/GameBrowser.zip
             dist/GameBrowser.ipa
           retention-days: 14
+
+      # Actions artifacts can only be downloaded by someone logged in to
+      # GitHub, and a phone browser that isn't logged in silently saves the
+      # login page under the artifact's name -- which then fails to unzip.
+      # A release asset is a plain, unauthenticated direct link, and it hands
+      # over the .ipa itself rather than a zip containing a zip containing it.
+      - name: Publish to the branch's rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          TAG="build-$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')"
+          NOTES="Unsigned build of \`$BRANCH\` at $GITHUB_SHA.
+
+          The IPA is deliberately unsigned, so it cannot be installed by
+          tapping it -- it needs a signing tool (TrollStore, Sideloadly,
+          AltStore, ...). The APK is debug-signed and installs directly.
+
+          Each file is replaced whenever its own workflow runs."
+          # Tolerates the other platform's job having created it first.
+          gh release create "$TAG" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "$BRANCH (latest build)" \
+            --notes "$NOTES" || true
+          gh release edit "$TAG" --notes "$NOTES" || true
+          gh release upload "$TAG" dist/GameBrowser.ipa --clobber
