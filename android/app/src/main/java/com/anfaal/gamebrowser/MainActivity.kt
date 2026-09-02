@@ -194,6 +194,12 @@ class MainActivity : FragmentActivity() {
                         if (viewModel.showFps) {
                             FpsBadge(viewModel, modifier = Modifier.align(Alignment.BottomStart))
                         }
+                        // The pads sit above the page and the trackpad overlay:
+                        // a button must take the touch rather than moving the
+                        // cursor underneath it.
+                        if (viewModel.padVisible) {
+                            ControlPadOverlay(viewModel, modifier = Modifier.fillMaxSize())
+                        }
                     }
 
                     if (viewModel.pendingCredential != null) {
@@ -241,6 +247,20 @@ class MainActivity : FragmentActivity() {
                 }
                 if (showHistory) {
                     HistoryScreen(viewModel, onDismiss = { showHistory = false }, modifier = Modifier.fillMaxSize())
+                }
+                if (viewModel.showProfiles) {
+                    ControlProfilesScreen(
+                        viewModel,
+                        onDismiss = { viewModel.showProfiles = false },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                if (viewModel.showPadInspector) {
+                    PadInspectorScreen(
+                        viewModel,
+                        onDismiss = { viewModel.showPadInspector = false },
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
                 if (viewModel.showDownloads) {
                     DownloadsScreen(

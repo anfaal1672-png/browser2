@@ -421,7 +421,16 @@ class TabManager(
                 view.evaluateJavascript(
                     "window.__gb && __gb.setViewportMode('${viewModel.viewportMode}')", null)
 
-                if (tab === activeTab) viewModel.applyFpsMeter()
+                if (tab === activeTab) {
+                    viewModel.applyFpsMeter()
+                    // A profile pinned to this site comes back on its own, and
+                    // can ask for the game to be blown up straight away - with
+                    // both, opening the game is the whole setup.
+                    viewModel.applySiteProfile(url)
+                    if (viewModel.activeProfile?.autoFocusGame == true && !viewModel.gameFocused) {
+                        viewModel.toggleGameFocus()
+                    }
+                }
 
                 if (tab === activeTab) {
                     viewModel.currentUrl = url

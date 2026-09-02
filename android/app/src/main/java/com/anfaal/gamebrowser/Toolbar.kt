@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
@@ -391,6 +392,10 @@ private fun OverflowMenu(
             MenuItem(loc("ページを翻訳", "Translate page"), Icons.Filled.Translate, accent, viewModel.currentUrl != null) {
                 open = false
                 viewModel.translatePage()
+            }
+            MenuItem(loc("コントロール設定", "Controls"), Icons.Filled.Gamepad, accent) {
+                open = false
+                viewModel.showProfiles = true
             }
             if (viewModel.highlightsEnabled) {
                 MenuItem(loc("ハイライトを保存(直近15秒)", "Save highlight (last 15s)"), Icons.Filled.Videocam, accent) {

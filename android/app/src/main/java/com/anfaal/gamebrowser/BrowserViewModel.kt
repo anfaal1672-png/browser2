@@ -24,6 +24,12 @@ import kotlin.math.min
 /** Which glyph a toast shows, mirroring the SF Symbol names iOS passes to `toast(_:icon:)`. */
 enum class ToastIcon { SUCCESS, DOWNLOAD, COPY, TAB, WARNING }
 
+/** How long a burst of pad-layout edits is coalesced before it reaches disk. */
+private const val PROFILE_SAVE_DEBOUNCE_MS = 400L
+
+/** Turbo re-press interval, matching the iOS timer. */
+private const val TURBO_INTERVAL_MS = 90L
+
 /** A key the virtual keyboard/joystick can send, mirroring InputBridge.Key on iOS. */
 data class GbKey(val key: String, val code: String, val keyCode: Int, val label: String) {
     companion object {
@@ -131,6 +137,388 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             <a class="retry" href="$href">${loc("再試行", "Try again")}</a>
             </body></html>
         """.trimIndent()
+    }
+
+    // MARK: - Custom control pads
+
+    /**
+     * Saved layouts. Every game binds different keys, and the fixed on-screen
+     * keyboard can't reach most of them - so the user builds their own pad.
+     *
+     * Dragging a button rewrites this on every touch sample, and serialising
+     * every profile at 120Hz is not free, so writes are coalesced.
+     */
+    var profiles by mutableStateOf(ControlProfileStore.loadProfiles(prefs))
+        private set
+
+    private var saveProfilesJob: Job? = null
+
+    private fun setProfiles(next: List<ControlProfile>) {
+        profiles = next
+        saveProfilesJob?.cancel()
+        saveProfilesJob = viewModelScope.launch {
+            delay(PROFILE_SAVE_DEBOUNCE_MS)
+            ControlProfileStore.saveProfiles(prefs, next)
+        }
+    }
+
+    /** Write immediately - the app may not get another chance. */
+    fun saveProfilesNow() {
+        saveProfilesJob?.cancel()
+        ControlProfileStore.saveProfiles(prefs, profiles)
+    }
+
+    var activeProfileId by mutableStateOf(ControlProfileStore.loadActive(prefs))
+        private set
+
+    /** Draw the active profile's buttons over the page. */
+    private var padVisibleBacking: Boolean by PersistedBoolean(prefs, "padVisible", false)
+    var padVisible: Boolean
+        get() = padVisibleBacking
+        set(value) {
+            padVisibleBacking = value
+            if (!value) {
+                releasePadButtons()
+                padEditing = false
+            }
+        }
+
+    /** Arrange mode: buttons are draggable and tapping one opens its settings. */
+    var padEditing by mutableStateOf(false)
+        private set
+
+    fun setPadEditing(editing: Boolean) {
+        padEditing = editing
+        if (editing) releasePadButtons()
+    }
+
+    /** Buttons currently latched down (sticky). */
+    var padLatched by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    var selectedPadButton by mutableStateOf<String?>(null)
+    var showPadInspector by mutableStateOf(false)
+    var showProfiles by mutableStateOf(false)
+
+    /** host -> profile id, so a game's controls come back on their own. */
+    private var siteProfiles: Map<String, String> = ControlProfileStore.loadAssignments(prefs)
+
+    private val turboJobs = mutableMapOf<String, Job>()
+
+    val activeProfile: ControlProfile?
+        get() = profiles.firstOrNull { it.id == activeProfileId }
+
+    private fun updateProfile(mutate: (ControlProfile) -> ControlProfile) {
+        val id = activeProfileId ?: return
+        setProfiles(profiles.map { if (it.id == id) mutate(it) else it })
+    }
+
+    fun activateProfile(id: String?) {
+        releasePadButtons()
+        activeProfileId = id
+        ControlProfileStore.saveActive(prefs, id)
+        selectedPadButton = null
+        activeProfile?.let { profile ->
+            joystickUsesArrows = profile.joystickArrows
+            if (profile.showJoystick) joystickVisible = true
+            padVisible = true
+        }
+        hapticSelection()
+    }
+
+    fun createProfile() {
+        val profile = ControlProfile(name = loc("新しいプロファイル", "New profile"))
+        setProfiles(profiles + profile)
+        activateProfile(profile.id)
+    }
+
+    fun duplicateProfile(id: String) {
+        val source = profiles.firstOrNull { it.id == id } ?: return
+        val copy = source.copy(
+            id = UUID.randomUUID().toString(),
+            name = source.name + loc(" のコピー", " copy"),
+            // Fresh button ids, or the two profiles would share latch/turbo state.
+            buttons = source.buttons.map { it.copy(id = UUID.randomUUID().toString()) },
+        )
+        setProfiles(profiles + copy)
+        activateProfile(copy.id)
+    }
+
+    fun deleteProfile(id: String) {
+        setProfiles(profiles.filterNot { it.id == id })
+        siteProfiles = siteProfiles.filterValues { it != id }
+        ControlProfileStore.saveAssignments(prefs, siteProfiles)
+        if (activeProfileId == id) activateProfile(profiles.firstOrNull()?.id)
+    }
+
+    fun renameProfile(id: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        setProfiles(profiles.map { if (it.id == id) it.copy(name = trimmed) else it })
+    }
+
+    fun addPresetProfiles() {
+        setProfiles(profiles + ControlProfile.presets())
+        hapticMedium()
+    }
+
+    /** Per-profile tuning, from the profiles screen. */
+    fun updateActiveProfile(mutate: (ControlProfile) -> ControlProfile) = updateProfile(mutate)
+
+    // MARK: Buttons
+
+    fun addPadButton() {
+        if (activeProfileId == null) return
+        val new = PadButton(keys = listOf("Space"), x = 0.5f, y = 0.5f)
+        updateProfile { it.copy(buttons = it.buttons + new) }
+        selectedPadButton = new.id
+        showPadInspector = true
+        hapticLight()
+    }
+
+    fun movePadButton(id: String, x: Float, y: Float) {
+        updatePadButton(id) {
+            it.copy(x = x.coerceIn(0.04f, 0.96f), y = y.coerceIn(0.04f, 0.96f))
+        }
+    }
+
+    fun updatePadButton(id: String, mutate: (PadButton) -> PadButton) {
+        updateProfile { profile ->
+            profile.copy(buttons = profile.buttons.map { if (it.id == id) mutate(it) else it })
+        }
+    }
+
+    fun deletePadButton(id: String) {
+        releasePadButton(id)
+        updateProfile { profile -> profile.copy(buttons = profile.buttons.filterNot { it.id == id }) }
+        if (selectedPadButton == id) selectedPadButton = null
+    }
+
+    /** Several keys on one button are held together - Shift+W is sprint. */
+    fun addBinding(name: String, to: String) {
+        updatePadButton(to) { button ->
+            if (name in PadKeyName.mouseNames) {
+                button.copy(
+                    mouseButton = if (name == PadKeyName.RIGHT_CLICK) 2 else 0,
+                    keys = emptyList(),
+                )
+            } else {
+                button.copy(
+                    mouseButton = null,
+                    keys = if (name in button.keys) button.keys else button.keys + name,
+                )
+            }
+        }
+        hapticLight()
+    }
+
+    fun removeBinding(name: String, from: String) {
+        updatePadButton(from) { button ->
+            if (name in PadKeyName.mouseNames) {
+                button.copy(mouseButton = null)
+            } else {
+                button.copy(keys = button.keys.filterNot { it == name })
+            }
+        }
+    }
+
+    // MARK: Per-site assignment
+
+    fun siteProfileId(host: String): String? = siteProfiles[host]
+
+    fun siteProfileName(host: String): String? {
+        val id = siteProfileId(host) ?: return null
+        return profiles.firstOrNull { it.id == id }?.name
+    }
+
+    fun assignCurrentProfileToSite(pinned: Boolean) {
+        val host = try {
+            currentUrl?.let { Uri.parse(it).host }
+        } catch (e: Exception) {
+            null
+        } ?: return
+        val id = activeProfileId
+        siteProfiles = if (pinned && id != null) {
+            siteProfiles + (host to id)
+        } else {
+            siteProfiles - host
+        }
+        ControlProfileStore.saveAssignments(prefs, siteProfiles)
+        hapticLight()
+    }
+
+    /** Bring back the profile pinned to this site, if it isn't already on. */
+    fun applySiteProfile(url: String?) {
+        val host = try {
+            url?.let { Uri.parse(it).host }
+        } catch (e: Exception) {
+            null
+        } ?: return
+        val id = siteProfileId(host) ?: return
+        if (id == activeProfileId) return
+        if (profiles.none { it.id == id }) return
+        activateProfile(id)
+    }
+
+    // MARK: Physical controller mapping
+
+    fun gamepadBinding(slot: GamepadSlot): String =
+        activeProfile?.gamepadKey(slot) ?: slot.defaultKey
+
+    fun setGamepadBinding(slot: GamepadSlot, name: String) {
+        updateProfile { it.copy(gamepadMap = it.gamepadMap + (slot.name to name)) }
+        hapticLight()
+    }
+
+    fun resetGamepadMapping() {
+        updateProfile { it.copy(gamepadMap = emptyMap()) }
+        hapticLight()
+    }
+
+    /** The profile's own cursor speed, or the global one when it has none. */
+    val effectiveSensitivity: Float
+        get() = activeProfile?.cursorSensitivity ?: cursorSensitivity
+
+    // MARK: Per-profile tuning
+
+    fun setProfileSensitivity(value: Float?) {
+        updateProfile { it.copy(cursorSensitivity = value) }
+    }
+
+    fun setPadOpacity(value: Float) {
+        updateProfile { it.copy(padOpacity = value) }
+    }
+
+    fun setAutoFocusGame(on: Boolean) {
+        updateProfile { it.copy(autoFocusGame = on) }
+        hapticLight()
+    }
+
+    /**
+     * Back to the values a new profile starts with - the buttons themselves and
+     * the controller mapping are left alone.
+     */
+    fun resetProfileTuning() {
+        val fresh = ControlProfile(name = "")
+        updateProfile {
+            it.copy(
+                padOpacity = fresh.padOpacity,
+                cursorSensitivity = fresh.cursorSensitivity,
+                autoFocusGame = fresh.autoFocusGame,
+            )
+        }
+        hapticMedium()
+    }
+
+    /** A layout as JSON, so it can be shared or kept somewhere that survives a reinstall. */
+    fun copyActiveProfile(): Boolean {
+        val profile = activeProfile ?: return false
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return false
+        clipboard.setPrimaryClip(ClipData.newPlainText("GameBrowser profile", profile.toJson().toString()))
+        hapticMedium()
+        return true
+    }
+
+    fun pasteProfile(): Boolean {
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: return false
+        val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(appContext)?.toString()
+            ?: return false
+        val parsed = try {
+            ControlProfile.fromJson(org.json.JSONObject(text))
+        } catch (e: Exception) {
+            return false
+        }
+        if (parsed.buttons.isEmpty() && parsed.gamepadMap.isEmpty()) return false
+        // Fresh ids so pasting the same layout twice gives two profiles rather
+        // than two things claiming to be the same one.
+        val profile = parsed.copy(
+            id = UUID.randomUUID().toString(),
+            buttons = parsed.buttons.map { it.copy(id = UUID.randomUUID().toString()) },
+        )
+        setProfiles(profiles + profile)
+        activateProfile(profile.id)
+        hapticMedium()
+        return true
+    }
+
+    // MARK: Sending
+
+    fun padPress(button: PadButton) {
+        hapticLight()
+        if (button.sticky) {
+            if (button.id in padLatched) {
+                releasePadButton(button.id)
+            } else {
+                padLatched = padLatched + button.id
+                engage(button)
+                if (button.turbo) startTurbo(button)
+            }
+            return
+        }
+        engage(button)
+        if (button.turbo) startTurbo(button)
+    }
+
+    fun padRelease(button: PadButton) {
+        if (button.sticky) return   // a latched button waits for the next tap
+        stopTurbo(button.id)
+        disengage(button)
+    }
+
+    private fun engage(button: PadButton) {
+        val mouse = button.mouseButton
+        if (mouse != null) {
+            mouseDown(mouse)
+            return
+        }
+        for (name in button.keys) KeyCatalog.key(name)?.let { keyDown(it) }
+    }
+
+    private fun disengage(button: PadButton) {
+        val mouse = button.mouseButton
+        if (mouse != null) {
+            mouseUp(mouse)
+            return
+        }
+        // Reverse order so a modifier in a combo is released last.
+        for (name in button.keys.reversed()) KeyCatalog.key(name)?.let { keyUp(it) }
+    }
+
+    /** Turbo: re-press on an interval for games that expect mashing. */
+    private fun startTurbo(button: PadButton) {
+        stopTurbo(button.id)
+        turboJobs[button.id] = viewModelScope.launch {
+            while (true) {
+                delay(TURBO_INTERVAL_MS)
+                disengage(button)
+                engage(button)
+            }
+        }
+    }
+
+    private fun stopTurbo(id: String) {
+        turboJobs.remove(id)?.cancel()
+    }
+
+    private fun releasePadButton(id: String) {
+        stopTurbo(id)
+        padLatched = padLatched - id
+        activeProfile?.buttons?.firstOrNull { it.id == id }?.let { disengage(it) }
+    }
+
+    /**
+     * Drop everything the pads are holding - hiding them, editing, switching
+     * tabs or profiles must never leave a key or mouse button stuck down.
+     */
+    fun releasePadButtons() {
+        turboJobs.values.forEach { it.cancel() }
+        turboJobs.clear()
+        val latched = padLatched
+        padLatched = emptySet()
+        val profile = activeProfile ?: return
+        profile.buttons.filter { it.id in latched }.forEach { disengage(it) }
     }
 
     // MARK: - Resetting settings
@@ -1114,8 +1502,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun moveCursor(dxRaw: Float, dyRaw: Float) {
         val speed = hypot(dxRaw.toDouble(), dyRaw.toDouble()).toFloat()
         val accel = min(2.2f, 0.7f + speed / 9f)
-        val dx = dxRaw * cursorSensitivity * accel
-        val dy = dyRaw * cursorSensitivity * accel
+        val dx = dxRaw * effectiveSensitivity * accel
+        val dy = dyRaw * effectiveSensitivity * accel
         cursorPosition = clamp(Pair(cursorPosition.first + dx, cursorPosition.second + dy))
         js("window.__gb && __gb.move(${f(cursorPosition.first)}, ${f(cursorPosition.second)}, ${f(dx)}, ${f(dy)})")
     }

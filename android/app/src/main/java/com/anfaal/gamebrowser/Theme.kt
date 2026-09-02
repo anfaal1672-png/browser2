@@ -87,6 +87,7 @@ object GB {
         val small = 10.dp
         val medium = 14.dp
         val large = 18.dp
+        val pill = 999.dp
     }
 
     object Space {
