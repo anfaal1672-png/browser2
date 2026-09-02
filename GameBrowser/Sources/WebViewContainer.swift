@@ -18,6 +18,10 @@ struct WebViewContainer: UIViewRepresentable {
             webView.frame = container.bounds
             webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             container.addSubview(webView)
+            // The first load starts before this point, with the web view
+            // detached; assert the style again now that it has a real trait
+            // environment, in case anything resolved against the empty one.
+            viewModel.applyInterfaceStyle()
         }
         viewModel.webViewSize = container.bounds.size
         // In cursor mode all touches are handled by the trackpad overlay.

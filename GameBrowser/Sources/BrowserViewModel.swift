@@ -1872,14 +1872,21 @@ final class BrowserViewModel: NSObject, ObservableObject {
 
     /// The interface style the page itself should render against.
     ///
-    /// This used to be left to the window. `.preferredColorScheme` sets the
-    /// window's override after the scene's first layout, but tabs are created
-    /// and start loading from this class's initialiser — before a window
-    /// exists at all. The first page of a cold start therefore answered
-    /// `prefers-color-scheme` from the device's setting rather than the app's,
-    /// and only a later navigation came out right, which is why switching to
-    /// PC mode (which re-navigates every tab) appeared to be what fixed it.
-    /// Setting it on the web view takes the window out of the picture.
+    /// This used to be left to the window, and the first page of a cold start
+    /// came out light however the app and the device were set.
+    ///
+    /// `restoreTabs()` runs from this class's initialiser and `selectTab()`
+    /// starts the load immediately, so that first navigation happens while the
+    /// web view has no superview and no window. A detached view has no trait
+    /// environment to resolve against — it does not fall back to the device's
+    /// setting, it falls back to light — so the page was told
+    /// `prefers-color-scheme: light` even on a phone in dark mode. Every later
+    /// navigation runs against the real window and comes out right, which is
+    /// why switching to PC mode (which re-navigates every tab) looked like the
+    /// thing that fixed it.
+    ///
+    /// An explicit override on the web view resolves without a trait
+    /// environment at all, so it holds while detached.
     var webInterfaceStyle: UIUserInterfaceStyle {
         switch UserDefaults.standard.object(forKey: "appTheme") as? Int ?? Default.appTheme {
         case 1: return .light
@@ -1888,8 +1895,10 @@ final class BrowserViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// Re-apply after the setting changes. The media query re-evaluates on a
-    /// trait change by itself, so nothing needs reloading.
+    /// Re-apply: after the setting changes, and once the view is actually on
+    /// screen. The media query re-evaluates on a trait change by itself, so
+    /// nothing needs reloading — a page that did somehow start out light
+    /// flips when this lands.
     func applyInterfaceStyle() {
         let style = webInterfaceStyle
         for tab in tabs { tab.webView.overrideUserInterfaceStyle = style }
