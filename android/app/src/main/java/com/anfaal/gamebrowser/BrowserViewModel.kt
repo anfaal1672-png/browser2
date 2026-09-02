@@ -633,6 +633,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             mimeType = mimeType,
             contentLength = contentLength,
             referer = currentUrl,
+            cookie = tabManager.cookieHeader(url),
         )
         if (started) {
             toast(loc("ダウンロードを開始しました", "Download started"), ToastIcon.DOWNLOAD)

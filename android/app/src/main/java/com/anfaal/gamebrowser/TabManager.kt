@@ -244,6 +244,28 @@ class TabManager(
         }
     }
 
+    /**
+     * The `Cookie` header a download of [url] should carry.
+     *
+     * `CookieManager.getInstance()` is the *default* profile's jar, so a
+     * download started from a private tab would have gone out logged-out -
+     * exactly the case (a file behind a game's login) where it matters most.
+     */
+    fun cookieHeader(url: String): String? = try {
+        val privateManager = if (
+            activeTab?.isPrivate == true &&
+            privateProfileInUse &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+        ) {
+            ProfileStore.getInstance().getProfile(PRIVATE_PROFILE)?.cookieManager
+        } else {
+            null
+        }
+        (privateManager ?: CookieManager.getInstance()).getCookie(url)
+    } catch (e: Exception) {
+        null
+    }
+
     /** Throws the private profile away once no private tab is left. */
     private fun endPrivateSessionIfEmpty() {
         if (tabs.any { it.isPrivate }) return

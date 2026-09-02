@@ -5,7 +5,6 @@ import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.os.Environment
-import android.webkit.CookieManager
 import android.webkit.URLUtil
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -110,6 +109,7 @@ class DownloadManager(context: Context) {
         mimeType: String? = null,
         contentLength: Long = 0,
         referer: String? = null,
+        cookie: String? = null,
     ): Boolean {
         if (!URLUtil.isNetworkUrl(url)) return false
         val name = try {
@@ -131,13 +131,10 @@ class DownloadManager(context: Context) {
         if (!userAgent.isNullOrEmpty()) request.addRequestHeader("User-Agent", userAgent)
         if (!referer.isNullOrEmpty()) request.addRequestHeader("Referer", referer)
         // Most game files sit behind a login, so the page's cookies have to go
-        // with the request - the download service has its own cookie jar.
-        try {
-            val cookie = CookieManager.getInstance().getCookie(url)
-            if (!cookie.isNullOrEmpty()) request.addRequestHeader("Cookie", cookie)
-        } catch (e: Exception) {
-            // No cookie store yet; the request just goes out without one.
-        }
+        // with the request - the download service has its own cookie jar. The
+        // caller supplies them, because which jar they come from depends on
+        // whether the tab is private.
+        if (!cookie.isNullOrEmpty()) request.addRequestHeader("Cookie", cookie)
 
         val id = try {
             system.enqueue(request)
